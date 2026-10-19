@@ -23,7 +23,7 @@ interface InstallExtensionDialogProps {
 }
 
 /**
- * Walks through installing the BrowserOS neo extension in Claude Desktop,
+ * Walks through installing the NEOB extension in Claude Desktop,
  * one step at a time, with a screenshot of the real control at each stop.
  *
  * `DialogContent` hardcodes `sm:max-w-md`, and a base-only `max-w` is
@@ -55,7 +55,7 @@ export function InstallExtensionDialog({
         <div className="flex flex-col sm:flex-row">
           <nav className="shrink-0 border-border-2 border-b bg-bg-sunken px-5 py-5 sm:w-60 sm:border-r sm:border-b-0">
             <DialogTitle className="font-semibold text-[15px] text-ink leading-snug">
-              Install BrowserOS neo
+              Install NEOB
             </DialogTitle>
             <DialogDescription className="mt-1 text-[12px] text-ink-3 leading-snug">
               {COWORK_REQUIREMENT_LINE}

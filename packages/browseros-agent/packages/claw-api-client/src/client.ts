@@ -379,7 +379,7 @@ export class ClawApiClient {
       throw new ApiResponseError(errorResponse ?? result.response)
     }
     if (result.data === undefined) {
-      throw new Error('BrowserOS neo API returned an empty success response')
+      throw new Error('NEOB API returned an empty success response')
     }
     return result.data
   }

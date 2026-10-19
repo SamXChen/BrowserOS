@@ -66,7 +66,7 @@ describe('ProductHuntBanner', () => {
     )
 
     expect(html).toContain('Live on Product Hunt.')
-    expect(html).toContain('A vote or comment helps keep BrowserOS free.')
+    expect(html).toContain('A vote or comment helps keep NEOB free.')
     expect(html).toContain('Support →')
     expect(html).toContain('Product Hunt')
   })

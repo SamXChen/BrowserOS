@@ -27,7 +27,7 @@ import { formatTokens, skillCommand } from './skills.helpers'
 const CELL_PADDING = 'px-2 py-3 first:pl-4 last:pr-4'
 
 /**
- * Skills list. A skill is one BrowserOS neo linked into the connected coding
+ * Skills list. A skill is one NEOB linked into the connected coding
  * agents; each row shows its run count and token savings. Row click opens
  * the SKILL.md and run history.
  */
@@ -49,8 +49,7 @@ export function Skills() {
             Skills
           </h1>
           <p className="text-ink-2 text-sm">
-            Skills BrowserOS neo linked into your coding agents. Re-run one by
-            name.
+            Skills NEOB linked into your coding agents. Re-run one by name.
           </p>
         </div>
         <SkillFormDialog
@@ -66,8 +65,7 @@ export function Skills() {
 
       {isError ? (
         <SkillsNotice>
-          Could not load your skills. Check that BrowserOS neo is running and
-          try again.
+          Could not load your skills. Check that NEOB is running and try again.
         </SkillsNotice>
       ) : isLoading ? (
         <SkillsSkeleton />
@@ -212,9 +210,9 @@ function SkillsEmpty() {
       <div className="flex flex-col gap-1">
         <p className="font-semibold text-base text-ink">No skills yet</p>
         <p className="mx-auto max-w-md text-ink-2 text-sm">
-          When your coding agent saves a repeatable browser task with BrowserOS
-          neo, it shows up here, linked into your agents and re-runnable by
-          name. You can also write one yourself.
+          When your coding agent saves a repeatable browser task with NEOB neo,
+          it shows up here, linked into your agents and re-runnable by name. You
+          can also write one yourself.
         </p>
       </div>
       <SkillFormDialog

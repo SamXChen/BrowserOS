@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/icon/32.png" />
-    <title>BrowserOS neo</title>
+    <!-- Chrome caches favicons per page URL, so replacing the bytes behind an
+         already-used icon path does not update the tab. Keep this URL distinct
+         from /icon/*.png, which the toolbar also uses. -->
+    <link rel="icon" type="image/svg+xml" href="/icons/neob.svg" />
+    <title>NEOB</title>
     <!-- Pre-applies the stored theme before React renders to avoid a
          theme flash. Must stay type="module": Vite extracts it into a
          chunk, which MV3's no-inline-script CSP requires. -->

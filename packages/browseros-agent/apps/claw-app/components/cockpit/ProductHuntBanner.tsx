@@ -44,13 +44,13 @@ export function ProductHuntBannerCard({
       <p className="min-w-0 flex-1 truncate text-[13px] text-cyanotype-ink leading-5">
         <span className="font-semibold">Live on Product Hunt.</span>{' '}
         <span className="text-cyanotype-soft">
-          A vote or comment helps keep BrowserOS free.
+          A vote or comment helps keep NEOB free.
         </span>
       </p>
       <Button
         size="sm"
         onClick={onOpen}
-        aria-label="Support BrowserOS on Product Hunt"
+        aria-label="Support NEOB on Product Hunt"
         className="h-7 shrink-0 bg-[#ff6154] px-3 text-[#18181b] text-[13px] hover:bg-[#e5563f]"
       >
         Support →

@@ -1,0 +1,87 @@
+#!/bin/zsh
+# NeoB 启动器（内嵌在 NeoB.app/Contents/MacOS/，作为 CFBundleExecutable）
+#
+# 双击 app 时执行本脚本：
+#   1) 确保自建 claw-server 在跑（固定端口，避开官方默认端口）
+#   2) exec 同目录的真实二进制 "BrowserOS neo"，注入本地 cockpit 与 server 端口
+#
+# 配置来自 Contents/Resources/config.env（可改）
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+RES="$HERE/../Resources"
+
+if [ -f "$RES/config.env" ]; then
+  # shellcheck disable=SC1091
+  source "$RES/config.env"
+fi
+
+: "${REPO_ROOT:?config.env 缺少 REPO_ROOT}"
+: "${NEO_EXECUTABLE:=BrowserOS neo}"
+: "${SERVER_PORT:=9310}"
+: "${CDP_PORT:=49350}"
+: "${PROFILE_DIR:=$HOME/Library/Application Support/NeoB/profile}"
+: "${STATE_DIR:=$HOME/Library/Application Support/NeoB/state}"
+
+# 真实二进制与脚本同目录（内嵌式，避免 exec 自身）
+NEO_BIN="$HERE/$NEO_EXECUTABLE"
+
+AGENT_ROOT="$REPO_ROOT/packages/browseros-agent"
+SERVER_DIR="$AGENT_ROOT/dist/prod/claw-server/darwin-arm64"
+SERVER_BIN="$SERVER_DIR/resources/bin/browseros-claw-server"
+SERVER_RES="$SERVER_DIR/resources"
+EXT_DIR="$AGENT_ROOT/apps/claw-app/dist/chrome-mv3"
+
+mkdir -p "$PROFILE_DIR" "$STATE_DIR"
+
+if [ ! -x "$NEO_BIN" ]; then
+  echo "找不到浏览器二进制：$NEO_BIN" >&2
+  exit 1
+fi
+
+# ---- sidecar 配置（每次启动重写）----
+cat > "$STATE_DIR/sidecar.json" <<EOF
+{
+  "ports": { "server": $SERVER_PORT, "cdp": $CDP_PORT, "proxy": $SERVER_PORT },
+  "directories": { "resources": "$SERVER_RES", "execution": "$STATE_DIR" },
+  "flags": { "allow_remote_in_mcp": false },
+  "instance": { "browseros_version": "$NATIVE_VERSION" }
+}
+EOF
+
+# ---- 1) 自建 claw-server ----
+if curl -s -m 2 "http://127.0.0.1:$SERVER_PORT/system/health" >/dev/null 2>&1; then
+  echo "claw-server 已在 $SERVER_PORT 运行"
+elif [ -x "$SERVER_BIN" ]; then
+  echo "启动自建 claw-server (server=$SERVER_PORT cdp=$CDP_PORT)"
+  nohup "$SERVER_BIN" --config "$STATE_DIR/sidecar.json" \
+    >> "$STATE_DIR/server.log" 2>&1 &
+else
+  echo "警告：未找到自建 server（$SERVER_BIN），将以无 MCP 模式启动" >&2
+fi
+
+# ---- 2) 浏览器参数 ----
+ARGS=(
+  "--disable-browseros-extensions"
+  "--disable-browseros-server"
+  "--browseros-product=browserclaw"
+  "--browseros-mcp-port=$SERVER_PORT"
+  "--browseros-server-port=$SERVER_PORT"
+  "--browseros-proxy-port=$SERVER_PORT"
+  # Same port, two switches: --remote-debugging-port is where CDP listens,
+  # --browseros-cdp-port is what the new tab page reads from the pref.
+  # Change both together or the page reports a dead port.
+  "--browseros-cdp-port=$CDP_PORT"
+  "--remote-debugging-port=$CDP_PORT"
+  "--user-data-dir=$PROFILE_DIR"
+  "--no-first-run"
+  "--no-default-browser-check"
+)
+
+if [ -d "$EXT_DIR" ]; then
+  ARGS+=("--load-extension=$EXT_DIR")
+else
+  echo "警告：未找到本地 cockpit（$EXT_DIR），新标签页将回退到原生" >&2
+fi
+
+exec "$NEO_BIN" "${ARGS[@]}"

@@ -16,7 +16,7 @@ export const MCPB_FILENAME = EXTENSION_DOWNLOAD_URL.slice(
 )
 
 export const COWORK_REQUIREMENT_LINE =
-  'To use BrowserOS neo with Claude Cowork, you need to install this extension.'
+  'To use NEOB with Claude Cowork, you need to install this extension.'
 
 /**
  * Screenshots live in the `browserclaw` R2 bucket rather than the extension
@@ -64,7 +64,7 @@ export const INSTALL_STEPS: readonly InstallStep[] = [
     id: 'download',
     title: 'Download',
     kind: 'download',
-    body: `Download the BrowserOS neo extension. It saves to your Downloads folder as ${MCPB_FILENAME}.`,
+    body: `Download the NEOB extension. It saves to your Downloads folder as ${MCPB_FILENAME}.`,
   },
   {
     id: 'install-extension',
@@ -87,10 +87,10 @@ export const INSTALL_STEPS: readonly InstallStep[] = [
   {
     id: 'confirm-install',
     title: 'Click Install',
-    body: 'Claude shows the BrowserOS neo extension details. Click Install to finish — Claude can now drive BrowserOS neo.',
+    body: 'Claude shows the NEOB extension details. Click Install to finish — Claude can now drive NEOB.',
     image: {
       src: `${IMAGE_BASE}/step-confirm-install.webp`,
-      alt: "Claude Desktop's BrowserOS neo extension details sheet with the Install button in the top right",
+      alt: "Claude Desktop's NEOB extension details sheet with the Install button in the top right",
     },
   },
 ]

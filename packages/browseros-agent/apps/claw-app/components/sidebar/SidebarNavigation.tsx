@@ -24,8 +24,9 @@ interface NavItem {
   icon: ComponentType<SVGProps<SVGSVGElement>>
 }
 
+// `/` is the blank new tab page, so Cockpit keeps its own path.
 const navItems: NavItem[] = [
-  { name: 'Cockpit', to: '/', icon: LayoutDashboard },
+  { name: 'Cockpit', to: '/cockpit', icon: LayoutDashboard },
   { name: 'MCP', to: '/mcp', icon: PlugZap },
   { name: 'Skills', to: '/skills', icon: Repeat },
   { name: 'Audit', to: '/audit', icon: ScrollText },
@@ -33,8 +34,7 @@ const navItems: NavItem[] = [
 ]
 
 function isNavItemActive(item: NavItem, pathname: string): boolean {
-  if (item.to === '/') return pathname === '/'
-  return pathname.startsWith(item.to)
+  return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
 export function SidebarNavigation({ expanded = true }: SidebarNavigationProps) {

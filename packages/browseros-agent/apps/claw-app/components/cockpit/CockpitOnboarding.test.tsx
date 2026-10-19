@@ -38,9 +38,7 @@ describe('CockpitOnboarding', () => {
     expect(html).toContain('Copy task')
     expect(html).toContain('Manage agents')
     expect(html).toContain('Paste this prompt into your agent.')
-    expect(html).toContain(
-      'Using BrowserOS neo, search for the current monthly prices',
-    )
+    expect(html).toContain('Using NEOB, search for the current monthly prices')
   })
 
   it('first-run: retires the single setup demo and the numbered step strip', () => {
@@ -85,9 +83,7 @@ describe('CockpitOnboarding', () => {
 
   it('waiting: retains the starter prompt tile so the reader can still copy', () => {
     const html = render('waiting', ['Claude Code'])
-    expect(html).toContain(
-      'Using BrowserOS neo, search for the current monthly prices',
-    )
+    expect(html).toContain('Using NEOB, search for the current monthly prices')
   })
 
   it('renders the docs link in both states with no refresh affordance', () => {

@@ -10,6 +10,25 @@ import {
 
 const BROWSEROS_SERVER_PORT_PREF = 'browseros.server.server_port'
 const BROWSEROS_PROXY_PORT_PREF = 'browseros.server.proxy_port'
+const BROWSEROS_CDP_PORT_PREF = 'browseros.server.cdp_port'
+
+/** A port together with where the number came from, so UI can label it. */
+export interface ResolvedPort {
+  port: number
+  source: 'pref' | 'fallback'
+}
+
+export interface BrowserOSPortSnapshot {
+  /** Sidecar HTTP API port. */
+  server: ResolvedPort
+  /** MCP proxy port, the one the `/mcp` endpoint is served on. */
+  proxy: ResolvedPort
+  /**
+   * CDP port. `null` when the browser never published it; the launcher must
+   * pass `--browseros-cdp-port` for the pref to carry the real value.
+   */
+  cdp: ResolvedPort | null
+}
 
 export function fallbackClawApiBaseUrl(): string {
   return `http://127.0.0.1:${CLAW_API_PORT_DEFAULT}`
@@ -63,6 +82,45 @@ export async function resolveBrowserOSMcpBaseUrl(
 ): Promise<string> {
   const port = await readBrowserOSPort(BROWSEROS_PROXY_PORT_PREF)
   return port ? loopbackBaseUrl(port) : resolveApiBaseUrlFromSources(sources)
+}
+
+/**
+ * Reads every port the new-tab panel shows, keeping each value's provenance so
+ * the UI can say whether it is real or a fallback.
+ *
+ * Server and proxy fall back to the same trusted sources the API client uses,
+ * because that is where traffic actually goes. CDP has no honest fallback:
+ * printing a guess would show a port nothing listens on, so it stays `null`
+ * and the panel reports it as unknown.
+ */
+export async function readBrowserOSPorts(
+  sources = apiBaseUrlSourcesFromWindow(),
+): Promise<BrowserOSPortSnapshot> {
+  const [serverPort, proxyPort, cdpPort] = await Promise.all([
+    readBrowserOSPort(BROWSEROS_SERVER_PORT_PREF),
+    readBrowserOSPort(BROWSEROS_PROXY_PORT_PREF),
+    readBrowserOSPort(BROWSEROS_CDP_PORT_PREF),
+  ])
+
+  const fallbackPort = portFromBaseUrl(resolveApiBaseUrlFromSources(sources))
+
+  return {
+    server: serverPort
+      ? { port: serverPort, source: 'pref' }
+      : { port: fallbackPort, source: 'fallback' },
+    proxy: proxyPort
+      ? { port: proxyPort, source: 'pref' }
+      : { port: fallbackPort, source: 'fallback' },
+    cdp: cdpPort ? { port: cdpPort, source: 'pref' } : null,
+  }
+}
+
+function portFromBaseUrl(baseUrl: string): number {
+  try {
+    return validPort(Number(new URL(baseUrl).port)) ?? CLAW_API_PORT_DEFAULT
+  } catch {
+    return CLAW_API_PORT_DEFAULT
+  }
 }
 
 async function readBrowserOSPort(prefName: string): Promise<number | null> {

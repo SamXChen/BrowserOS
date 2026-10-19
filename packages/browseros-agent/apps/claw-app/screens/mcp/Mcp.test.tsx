@@ -198,7 +198,7 @@ describe('Mcp (editorial)', () => {
 
   it('keeps the install walkthrough closed until the callout is activated', () => {
     const html = renderApp()
-    expect(html).not.toContain('Install BrowserOS neo')
+    expect(html).not.toContain('Install NEOB')
     expect(html).not.toContain(EXTENSION_DOWNLOAD_URL)
   })
 

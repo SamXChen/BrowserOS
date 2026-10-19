@@ -341,7 +341,7 @@ describe('Settings screen interactions', () => {
     await mount()
 
     expect(container.textContent).toContain(
-      'Could not load settings. Check that BrowserOS neo is running and try again.',
+      'Could not load settings. Check that NEOB is running and try again.',
     )
     expect(container.querySelector('[role="switch"]')).toBeNull()
   })

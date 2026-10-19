@@ -4,6 +4,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router'
 import { CockpitShell } from '@/components/layout/CockpitShell'
 import { Analytics } from '@/modules/analytics/Analytics'
 import { Audit } from '@/screens/audit/Audit'
+import { BlankNewTab } from '@/screens/blank/BlankNewTab'
 import { Cockpit } from '@/screens/cockpit/Cockpit'
 import { Mcp } from '@/screens/mcp/Mcp'
 import { Replay } from '@/screens/replay/Replay'
@@ -19,8 +20,11 @@ export function App() {
     <HashRouter>
       <Analytics />
       <Routes>
+        {/* The new tab page is intentionally blank; the cockpit lives one
+            click away at /cockpit and must not share its sidebar. */}
+        <Route path="/" element={<BlankNewTab />} />
         <Route element={<CockpitShell />}>
-          <Route path="/" element={<Cockpit />} />
+          <Route path="/cockpit" element={<Cockpit />} />
           <Route path="/mcp" element={<Mcp />} />
           <Route
             path="/diagnostics"

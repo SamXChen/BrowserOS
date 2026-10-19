@@ -102,14 +102,13 @@ export function Settings() {
           Settings
         </h1>
         <p className="text-ink-2 text-sm">
-          Choose which BrowserOS neo tools your agents can use.
+          Choose which NEOB tools your agents can use.
         </p>
       </header>
 
       {settings.isError ? (
         <div className="rounded-9 border border-ledger-border bg-card px-6 py-10 text-center text-ink-2 text-sm">
-          Could not load settings. Check that BrowserOS neo is running and try
-          again.
+          Could not load settings. Check that NEOB is running and try again.
         </div>
       ) : (
         <div className="rounded-9 border border-ledger-border bg-card">
@@ -297,7 +296,7 @@ function JevToken({ source }: { source: JevTokenSource }) {
 
       <p className="mt-2 text-[12px] text-ink-3 leading-snug">
         Agents pick up the change on their next tool list. An already installed
-        skill follows after BrowserOS neo restarts.
+        skill follows after NEOB restarts.
       </p>
 
       {(save.isError || remove.isError) && (

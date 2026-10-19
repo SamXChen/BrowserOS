@@ -121,7 +121,7 @@ export function parseDiagnostics(value: unknown): DiagnosticsSnapshot | null {
 
 export function productName(product: DiagnosticsSnapshot['product']): string {
   return product === 'browseros-neo'
-    ? 'BrowserOS neo'
+    ? 'NEOB'
     : product === 'browseros-feedback'
       ? 'BrowserOS (Reporter fallback)'
       : 'BrowserOS'
