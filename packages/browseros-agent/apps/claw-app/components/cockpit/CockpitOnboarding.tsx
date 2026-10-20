@@ -20,7 +20,6 @@ import {
   STARTER_PROMPT_LABEL,
 } from '@/screens/cockpit/cockpit-onboarding.helpers'
 import { StarterPromptTile } from './StarterPromptTile'
-import { VideoFeature } from './VideoFeature'
 
 interface CockpitOnboardingProps {
   state: Exclude<OnboardingState, 'ready'>
@@ -50,18 +49,13 @@ export function CockpitOnboarding({
       aria-label={HERO_COPY.eyebrow.toLowerCase()}
     >
       <OnboardingHero />
-      <div className="grid gap-6 md:grid-cols-12 md:items-stretch">
-        <div className="md:col-span-7">
-          <VideoFeature />
-        </div>
-        <StartPanel
-          className="md:col-span-5"
-          harnesses={connectedHarnesses}
-          listening={listening}
-          statusText={statusText}
-          onPromptCopied={flagCopied}
-        />
-      </div>
+      <StartPanel
+        className="max-w-2xl"
+        harnesses={connectedHarnesses}
+        listening={listening}
+        statusText={statusText}
+        onPromptCopied={flagCopied}
+      />
       <OnboardingFooter />
     </section>
   )
@@ -121,7 +115,7 @@ function StartPanel({
         />
       </div>
       {/* Fixed-height slot: text swaps in place so a copy never reflows the
-          panel (and, via items-stretch, the video beside it). */}
+          panel. */}
       <p className="flex min-h-[2.5rem] items-center gap-2 text-[12.5px] text-ink-3">
         {listening && (
           <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />

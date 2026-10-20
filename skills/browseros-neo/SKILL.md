@@ -64,6 +64,57 @@ When you hit something only a person can do (a sign-in, a one-time code, a captc
 
 If `request_human_help` is not among your tools, the user turned human help off: stop and tell them in your chat what you need.
 
+## Network mock handoff
+
+When the user pastes a `netref_*` reference, call the `network` tool with
+`action="handoff_get"` and `handoffId`. Do not reconstruct the request from a
+URL, open a tab to replay it, or patch `fetch` inside `run`.
+
+- Missing or expired reference: ask the user to copy it again from the Network
+  panel. Never invent a replacement sample.
+- Read the sample response with `handoff_get`. Prefer `patch_sample` plus a
+  small JSON Patch when only a few fields change; use `literal` only when the
+  whole body is intentional. If the body is over 512KiB, the tool reports a
+  summary — use `patch_sample`, do not try to read and paste the whole body.
+- Keep the server-provided `matcherSeed`. Add `ignoreKeys` only for query keys
+  that are names like nonce/ts or whose values changed between related
+  samples; do not ignore stable business keys. For GraphQL or one POST
+  endpoint used by several operations, use `bodyFields` to distinguish them.
+- `dryRun: true` first when the scope or conflict is ambiguous. It reports
+  matched history samples, the winner, and rules that would be replaced.
+- Call `rule_apply` and only claim success when the result says
+  `state: "active"`. `apply_failed` or `superseded` means do not ask the user
+  to refresh yet; explain what happened.
+- Rules default to **all tabs**. Say that explicitly, plus that the user can
+  toggle the rule off in the Network panel. Lenient query mode still matches
+  requests with extra query keys; mention it when relevant. Do not refresh or
+  navigate the user's page unless they explicitly ask you to.
+- After the user refreshes, call `rule_status`. `fulfilled`/confirmed means it
+  hit; `nearMisses` gives the query key, method, or body difference; offer the
+  one-click ignore or a new revision. `no_request_seen` means the request was
+  not emitted — do not claim success. `blocked` means the page rejected the
+  response (often CORS); explain it and check headers.
+- "Turn it off" means `rule_apply{enabled:false}` or the GUI switch, not
+  deletion. Delete only when the user says delete. Batch deletes need the count
+  restated and explicit confirmation first. Deleting a rule makes the next
+  request use the real response.
+- Leaving the task: keep the mock and the source tab unless the user asks
+  otherwise. Task-group cleanup must not delete rules, handoffs, or user tabs.
+- Reusing the same reference for a later edit is correct: call `rule_apply`
+  again with the same `handoffId`; it creates a new revision instead of a new
+  sample.
+
+Example: the user pastes a reference and asks to change a price. Call
+`handoff_get`, patch `/price` with `patch_sample`, apply, then say "active on
+all tabs; refresh to see it" only after the tool returns `active`.
+
+If `rule_apply` returns `failed` or `superseded`, say the rule did not go live
+and why; do not tell the user to refresh or claim the mock worked.
+
+If the user wants a reusable personal `neo-*` skill, save only the matching
+intent and steps. Never save `handoffId`, `recordId`, secrets, private bodies,
+or an actual rule definition; sample again next time.
+
 ## Failure
 
 This skill may be installed before your agent is connected. If BrowserOS neo's MCP tools are unavailable, open its MCP connections page and connect your agent, or copy the endpoint from Manual Setup into your agent's MCP settings. Then refresh its MCP connections or start a new session. The skill alone does not provide browser tools.

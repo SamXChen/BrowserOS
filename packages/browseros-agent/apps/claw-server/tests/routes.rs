@@ -512,6 +512,7 @@ async fn mcp_initialize_list_guard_audit_and_delete() -> anyhow::Result<()> {
         "windows",
         "evaluate",
         "run",
+        "network",
         "name_session",
         "save_skill",
         "mark_skill_run",
@@ -3075,4 +3076,50 @@ fn tab_json(tab: &MockTab) -> Value {
         object.insert("groupId".to_string(), json!(group_id));
     }
     value
+}
+
+#[tokio::test]
+async fn network_surface_serves_state_captures_and_rejects_foreign_origins() -> anyhow::Result<()> {
+    let app = test_app().await?;
+
+    let (status, state) = request_json(&app.router, "GET", "/api/v1/network/state", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state["capture"]["running"], false);
+    assert_eq!(state["browser"]["connected"], false);
+    assert_eq!(state["rules"]["total"], 0);
+
+    let (status, capture) = request_json(
+        &app.router,
+        "POST",
+        "/api/v1/network/captures",
+        Some(json!({})),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(capture["running"], true);
+
+    let (status, records) =
+        request_json(&app.router, "GET", "/api/v1/network/records?limit=10", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(records["records"].as_array().map(Vec::len), Some(0));
+
+    let (status, rules) = request_json(&app.router, "GET", "/api/v1/network/rules", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rules["rules"].as_array().map(Vec::len), Some(0));
+
+    let (status, _, _) = request_json_with_headers(
+        &app.router,
+        "GET",
+        "/api/v1/network/state",
+        None,
+        &[("origin", "https://evil.example")],
+    )
+    .await?;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, stopped) =
+        request_json(&app.router, "DELETE", "/api/v1/network/captures", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stopped["running"], false);
+    Ok(())
 }

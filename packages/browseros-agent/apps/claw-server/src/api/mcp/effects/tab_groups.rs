@@ -991,6 +991,7 @@ async fn dispatch_tab_groups(
         output_files,
         inner_call_hook: None,
         preloaded_helpers: Vec::new(),
+        network: None,
     });
     let execution = timeout(TAB_GROUP_OPERATION, execute_tool(tab_groups, args, &ctx)).await;
     let result = match execution {

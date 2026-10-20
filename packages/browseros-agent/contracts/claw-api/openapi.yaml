@@ -28,6 +28,46 @@ paths:
     $ref: ./paths/settings.yaml#/agent
   /api/v1/settings/agent/jev-token:
     $ref: ./paths/settings.yaml#/jevToken
+  /api/v1/network/state:
+    $ref: ./paths/network.yaml#/state
+  /api/v1/network/captures:
+    $ref: ./paths/network.yaml#/captures
+  /api/v1/network/records:
+    $ref: ./paths/network.yaml#/records
+  /api/v1/network/records/restore:
+    $ref: ./paths/network.yaml#/restoreRecord
+  /api/v1/network/records/{recordId}:
+    $ref: ./paths/network.yaml#/record
+  /api/v1/network/records/{recordId}/request-body:
+    $ref: ./paths/network.yaml#/requestBody
+  /api/v1/network/records/{recordId}/response-body:
+    $ref: ./paths/network.yaml#/responseBody
+  /api/v1/network/handoffs:
+    $ref: ./paths/network.yaml#/handoffs
+  /api/v1/network/handoffs/{id}:
+    $ref: ./paths/network.yaml#/handoff
+  /api/v1/network/rules:
+    $ref: ./paths/network.yaml#/rules
+  /api/v1/network/rules/{id}:
+    $ref: ./paths/network.yaml#/rule
+  /api/v1/network/rules/{id}/restore:
+    $ref: ./paths/network.yaml#/ruleRestore
+  /api/v1/network/rules/{id}/near-misses:
+    $ref: ./paths/network.yaml#/nearMisses
+  /api/v1/network/rules/{id}/ignore-keys:
+    $ref: ./paths/network.yaml#/ignoreKeys
+  /api/v1/network/rules/{id}/test:
+    $ref: ./paths/network.yaml#/ruleTest
+  /api/v1/network/rules/{id}/revisions:
+    $ref: ./paths/network.yaml#/revisions
+  /api/v1/network/rules/{id}/revisions/{revision}/restore:
+    $ref: ./paths/network.yaml#/revisionRestore
+  /api/v1/network/stop-all:
+    $ref: ./paths/network.yaml#/stopAll
+  /api/v1/network/hits:
+    $ref: ./paths/network.yaml#/hits
+  /api/v1/network/events:
+    $ref: ./paths/network.yaml#/events
   /api/v1/sessions:
     $ref: ./paths/sessions.yaml#/collection
   /api/v1/sessions/{sessionId}:
@@ -104,6 +144,62 @@ components:
   schemas:
     ApiError:
       $ref: ./schemas/common.yaml#/ApiError
+    NetworkCaptureTab:
+      $ref: ./schemas/network.yaml#/NetworkCaptureTab
+    NetworkCaptureState:
+      $ref: ./schemas/network.yaml#/NetworkCaptureState
+    NetworkStatus:
+      $ref: ./schemas/network.yaml#/NetworkStatus
+    NetworkHeaderPair:
+      $ref: ./schemas/network.yaml#/NetworkHeaderPair
+    NetworkMockMark:
+      $ref: ./schemas/network.yaml#/NetworkMockMark
+    NetworkRecord:
+      $ref: ./schemas/network.yaml#/NetworkRecord
+    NetworkRecordList:
+      $ref: ./schemas/network.yaml#/NetworkRecordList
+    NetworkBodyPage:
+      $ref: ./schemas/network.yaml#/NetworkBodyPage
+    NetworkHandoffRequest:
+      $ref: ./schemas/network.yaml#/NetworkHandoffRequest
+    NetworkHandoffCreated:
+      $ref: ./schemas/network.yaml#/NetworkHandoffCreated
+    NetworkHandoffSummary:
+      $ref: ./schemas/network.yaml#/NetworkHandoffSummary
+    NetworkHandoffList:
+      $ref: ./schemas/network.yaml#/NetworkHandoffList
+    NetworkHandoffDetail:
+      $ref: ./schemas/network.yaml#/NetworkHandoffDetail
+    NetworkRule:
+      $ref: ./schemas/network.yaml#/NetworkRule
+    NetworkRuleList:
+      $ref: ./schemas/network.yaml#/NetworkRuleList
+    NetworkRulePatch:
+      $ref: ./schemas/network.yaml#/NetworkRulePatch
+    NetworkRuleUpdated:
+      $ref: ./schemas/network.yaml#/NetworkRuleUpdated
+    NetworkNearMiss:
+      $ref: ./schemas/network.yaml#/NetworkNearMiss
+    NetworkNearMissList:
+      $ref: ./schemas/network.yaml#/NetworkNearMissList
+    NetworkIgnoreKeysRequest:
+      $ref: ./schemas/network.yaml#/NetworkIgnoreKeysRequest
+    NetworkIgnoreKeysResult:
+      $ref: ./schemas/network.yaml#/NetworkIgnoreKeysResult
+    NetworkRestoreRequest:
+      $ref: ./schemas/network.yaml#/NetworkRestoreRequest
+    NetworkRestoreResult:
+      $ref: ./schemas/network.yaml#/NetworkRestoreResult
+    NetworkDeleted:
+      $ref: ./schemas/network.yaml#/NetworkDeleted
+    NetworkRecordsCleared:
+      $ref: ./schemas/network.yaml#/NetworkRecordsCleared
+    NetworkStopAllResult:
+      $ref: ./schemas/network.yaml#/NetworkStopAllResult
+    NetworkHit:
+      $ref: ./schemas/network.yaml#/NetworkHit
+    NetworkHitList:
+      $ref: ./schemas/network.yaml#/NetworkHitList
     HealthResponse:
       $ref: ./schemas/system.yaml#/HealthResponse
     BrowserLink:

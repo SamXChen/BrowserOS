@@ -1,4 +1,5 @@
 import {
+  Activity,
   LayoutDashboard,
   PlugZap,
   Repeat,
@@ -30,6 +31,7 @@ const navItems: NavItem[] = [
   { name: 'MCP', to: '/mcp', icon: PlugZap },
   { name: 'Skills', to: '/skills', icon: Repeat },
   { name: 'Audit', to: '/audit', icon: ScrollText },
+  { name: 'Network', to: '/network', icon: Activity },
   { name: 'Settings', to: '/settings', icon: Settings },
 ]
 

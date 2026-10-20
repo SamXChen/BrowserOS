@@ -15,6 +15,7 @@ use crate::{
         cockpit::{CockpitQuery, SessionVisualService, TabActivityRecord, TabActivityService},
         harness::HarnessService,
         harness_skills::load_browserclaw_skill,
+        network::NetworkService,
         profiles::ProfileService,
         recordings::{LiveRecordingBus, RecordingIngestService, RecordingStore},
         replay::ReplayService,
@@ -56,6 +57,7 @@ pub struct AppState {
     /// Saved native-profile intent is separate from agent profiles and live browser state.
     pub targets: Arc<TargetBindings>,
     pub session_efficiency: Arc<SessionEfficiencyService>,
+    pub network: Arc<NetworkService>,
     pub browser: Arc<BrowserService>,
     pub visuals: Arc<SessionVisualService>,
     pub cockpit: Arc<CockpitQuery>,
@@ -142,7 +144,7 @@ impl AppState {
         ));
         let profiles = Arc::new(ProfileService::new(store.clone()));
         let session_efficiency = Arc::new(SessionEfficiencyService::new_with_analytics(
-            database,
+            database.clone(),
             analytics_sink.clone(),
         ));
         let sessions = Sessions::new_with_analytics(
@@ -169,6 +171,16 @@ impl AppState {
             tab_registry.clone(),
             config.native.capabilities,
         );
+        let network_browser = browser.clone();
+        let network = NetworkService::new(
+            Arc::new(move || {
+                let browser = network_browser.clone();
+                Box::pin(async move { browser.session().await })
+            }),
+            &database,
+            &config.browserclaw_dir,
+        )
+        .await?;
         let live_recordings = LiveRecordingBus::new();
         let recording_ingest = RecordingIngestService::new(
             recordings.clone(),
@@ -232,6 +244,7 @@ impl AppState {
             targets,
             session_efficiency,
             browser,
+            network,
             visuals,
             cockpit,
             help: Arc::new(crate::services::help::HelpRegistry::new(HELP_MAX_WAIT)),

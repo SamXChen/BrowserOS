@@ -7,6 +7,7 @@ import { Audit } from '@/screens/audit/Audit'
 import { BlankNewTab } from '@/screens/blank/BlankNewTab'
 import { Cockpit } from '@/screens/cockpit/Cockpit'
 import { Mcp } from '@/screens/mcp/Mcp'
+import { Network } from '@/screens/network/Network'
 import { Replay } from '@/screens/replay/Replay'
 import { Settings } from '@/screens/settings/Settings'
 import { SkillDetail } from '@/screens/skills/SkillDetail'
@@ -38,6 +39,14 @@ export function App() {
           <Route path="/skills/:name" element={<SkillDetail />} />
           <Route path="/ultrafast" element={<UltrafastWaitlist />} />
           <Route path="/settings" element={<Settings />} />
+          <Route
+            path="/network"
+            element={
+              <SensitiveRouteContent>
+                <Network />
+              </SensitiveRouteContent>
+            }
+          />
           <Route
             path="/audit"
             element={

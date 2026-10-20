@@ -6,6 +6,7 @@ pub mod error;
 pub mod frames;
 pub mod input;
 pub mod navigation;
+pub mod network;
 pub mod observer;
 pub mod page_signals;
 pub mod pages;

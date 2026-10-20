@@ -182,10 +182,10 @@ const BOOTSTRAP_JS: &str = r#"
     getByPlaceholder: 'There are no locators. Call await page.snapshot() and use the [ref=eN] handles.',
     frameLocator: 'There are no frame locators. Use page.cdp(method, paramsJson) for cross-frame work.',
     expect: 'There are no assertions. Use page.waitForSelector/waitForText, or assert inside page.evaluate.',
-    route: 'There is no network interception. Call the site API from inside page.evaluate.',
-    unroute: 'There is no network interception. Call the site API from inside page.evaluate.',
-    waitForRequest: 'There is no network interception. Call the site API from inside page.evaluate.',
-    waitForResponse: 'There is no network interception. Call the site API from inside page.evaluate.',
+    route: 'There is no in-page network interception in this SDK. Use the `network` tool: ask the user to copy a request reference from the Network panel, then call handoff_get and rule_apply.',
+    unroute: 'There is no in-page network interception in this SDK. Use the `network` tool: ask the user to copy a request reference from the Network panel, then call handoff_get and rule_apply.',
+    waitForRequest: 'There is no in-page network interception in this SDK. Use the `network` tool: ask the user to copy a request reference from the Network panel, then call handoff_get and rule_apply.',
+    waitForResponse: 'There is no in-page network interception in this SDK. Use the `network` tool: ask the user to copy a request reference from the Network panel, then call handoff_get and rule_apply.',
     waitForEvent: 'There is no event subscription in this runtime. Wait on the page instead: page.waitForSelector(sel).',
     on: 'There is no event subscription in this runtime. Wait on the page instead: page.waitForSelector(sel).',
     frames: 'Frames are not addressable. Use page.cdp(method, paramsJson).',
@@ -1904,6 +1904,7 @@ mod tests {
             output_files: create_browser_output_file_access(),
             inner_call_hook: None,
             preloaded_helpers: Vec::new(),
+            network: None,
         })
     }
 

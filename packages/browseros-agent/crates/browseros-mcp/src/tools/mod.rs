@@ -11,6 +11,7 @@ pub mod evaluate;
 pub mod grep;
 pub mod history;
 pub mod navigate;
+pub mod network;
 mod page_creation;
 pub mod pdf;
 pub mod read;
@@ -46,6 +47,7 @@ pub fn catalog() -> Vec<ToolDef> {
         windows::definition(),
         evaluate::definition(),
         run::definition(),
+        network::definition(),
     ]
 }
 

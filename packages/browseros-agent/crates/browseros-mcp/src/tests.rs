@@ -162,6 +162,7 @@ fn fake_ctx() -> ToolCtx {
         output_files: create_browser_output_file_access(),
         inner_call_hook: None,
         preloaded_helpers: Vec::new(),
+        network: None,
     })
 }
 
@@ -576,6 +577,7 @@ async fn harness_ctx() -> (ToolCtx, Arc<HarnessConnection>, u32) {
             output_files: create_browser_output_file_access(),
             inner_call_hook: None,
             preloaded_helpers: Vec::new(),
+            network: None,
         }),
         connection,
         page,
@@ -634,6 +636,7 @@ fn catalog_order_matches_typescript_registry() {
             "windows",
             "evaluate",
             "run",
+            "network",
         ]
     );
 }
@@ -666,6 +669,7 @@ fn catalog_page_metadata_matches_host_dispatch_contract() {
             ("windows", false),
             ("evaluate", true),
             ("run", false),
+            ("network", false),
         ]
     );
 }

@@ -269,14 +269,9 @@ fn page_parameters(method: &str) -> Option<&'static [&'static str]> {
             "accessibleName",
             "role",
         ]),
-        "Network.enable" => Some(&[
-            "maxTotalBufferSize",
-            "maxResourceBufferSize",
-            "maxPostDataSize",
-            "reportDirectSocketTraffic",
-            "enableDurableMessages",
-        ]),
-        "Network.disable" => Some(&[]),
+        // Network capture owns `Network.enable`/`disable` for the connection.
+        // Letting an agent toggle it through `page.cdp` would silently stop the
+        // capture the user asked for, so only read-only Network methods remain.
         "Network.getCookies" => Some(&["urls"]),
         "Network.getResponseBody" => Some(&["requestId"]),
         "Network.getRequestPostData" => Some(&["requestId"]),

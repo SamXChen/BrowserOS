@@ -22,6 +22,7 @@ mod cockpit;
 mod connections;
 mod feedback;
 mod live;
+mod network;
 mod previews;
 mod recordings;
 mod replay;
@@ -66,6 +67,73 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/settings/agent/jev-token",
             put(settings::save_jev_token).delete(settings::remove_jev_token),
         )
+        .route("/api/v1/network/state", get(network::state))
+        .route(
+            "/api/v1/network/captures",
+            post(network::start_capture).delete(network::stop_capture),
+        )
+        .route(
+            "/api/v1/network/records",
+            get(network::records).delete(network::delete_records),
+        )
+        .route(
+            "/api/v1/network/records/restore",
+            post(network::restore_record),
+        )
+        .route(
+            "/api/v1/network/records/{record_id}",
+            get(network::record).delete(network::delete_record),
+        )
+        .route(
+            "/api/v1/network/records/{record_id}/request-body",
+            get(network::request_body),
+        )
+        .route(
+            "/api/v1/network/records/{record_id}/response-body",
+            get(network::response_body),
+        )
+        .route(
+            "/api/v1/network/handoffs",
+            get(network::list_handoffs).post(network::create_handoff),
+        )
+        .route(
+            "/api/v1/network/handoffs/{id}",
+            get(network::get_handoff).delete(network::delete_handoff),
+        )
+        .route("/api/v1/network/rules", get(network::rules))
+        .route(
+            "/api/v1/network/rules/{id}",
+            get(network::rule)
+                .patch(network::patch_rule)
+                .delete(network::delete_rule),
+        )
+        .route(
+            "/api/v1/network/rules/{id}/restore",
+            post(network::restore_rule),
+        )
+        .route(
+            "/api/v1/network/rules/{id}/near-misses",
+            get(network::near_misses),
+        )
+        .route(
+            "/api/v1/network/rules/{id}/ignore-keys",
+            post(network::ignore_keys),
+        )
+        .route("/api/v1/network/rules/{id}/test", post(network::test_rule))
+        .route(
+            "/api/v1/network/rules/{id}/revisions",
+            get(network::revisions),
+        )
+        .route(
+            "/api/v1/network/rules/{id}/revisions/{revision}/restore",
+            post(network::restore_revision),
+        )
+        .route("/api/v1/network/stop-all", post(network::stop_all))
+        .route(
+            "/api/v1/network/hits",
+            get(network::hits).delete(network::delete_hits),
+        )
+        .route("/api/v1/network/events", get(network::events))
         .route("/api/v1/sessions", get(sessions::list))
         .route("/api/v1/sessions/{session_id}", get(sessions::get))
         .route(
@@ -190,7 +258,8 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let reject_origin = (path == "/api/v1/recordings/events"
         && !trusted_recording_origin(req.headers()))
-        || (path == "/api/v1/extension/update-ready" && !trusted_update_origin(req.headers()));
+        || (path == "/api/v1/extension/update-ready" && !trusted_update_origin(req.headers()))
+        || (path.starts_with("/api/v1/network") && !trusted_network_origin(req.headers()));
     let span = info_span!("http_request", request_id = %request_id.0, %method, %path);
     async move {
         let start = Instant::now();
@@ -240,6 +309,19 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
     }
     .instrument(span)
     .await
+}
+
+/// Network data is readable by the extension and by native (originless) clients
+/// only. Any other page origin, including the opaque `null`, is rejected.
+fn trusted_network_origin(headers: &axum::http::HeaderMap) -> bool {
+    match headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
+        None => true,
+        Some(BROWSERCLAW_EXTENSION_ORIGIN) => true,
+        Some(_) => false,
+    }
 }
 
 /// Stable origin derived from claw-app's manifest signing key.

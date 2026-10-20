@@ -522,6 +522,9 @@ async fn execute_with_cancellation(call: &ToolCall) -> DispatchExecution {
                 output_files: call.output_files.clone(),
                 inner_call_hook,
                 preloaded_helpers,
+                network: Some(Arc::new(
+                    crate::api::mcp::network_host::ClawNetworkHost::new(call.state.clone()),
+                )),
             });
             // A tab group is destroyed when its last page is reparented. Explicit
             // placement must share the detached grouper's conversation lock, so a

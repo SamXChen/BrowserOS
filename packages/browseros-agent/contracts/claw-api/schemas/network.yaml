@@ -1,0 +1,489 @@
+NetworkCaptureTab:
+  type: object
+  required: [tabId, pageId, title, url, attached]
+  properties:
+    tabId:
+      type: integer
+    pageId:
+      type: integer
+    title:
+      type: string
+    url:
+      type: string
+    attached:
+      type: boolean
+
+NetworkCaptureState:
+  type: object
+  required: [running, records, gapEvents]
+  properties:
+    running:
+      type: boolean
+    state:
+      type: string
+      enum: [running, paused, stopped]
+    startedAt:
+      type: integer
+      nullable: true
+    records:
+      type: integer
+    gapEvents:
+      type: integer
+    bodyBytes:
+      type: integer
+    tabs:
+      type: array
+      items:
+        $ref: '#/NetworkCaptureTab'
+
+NetworkStatus:
+  type: object
+  required: [browser, capture, rules]
+  properties:
+    browser:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+    capture:
+      $ref: '#/NetworkCaptureState'
+    rules:
+      type: object
+      required: [active, total]
+      properties:
+        active:
+          type: integer
+        total:
+          type: integer
+    runtime:
+      type: object
+      properties:
+        paused:
+          type: integer
+        decisionP95Ms:
+          type: integer
+        rulesGeneration:
+          type: integer
+
+NetworkHeaderPair:
+  type: object
+  required: [name, value]
+  properties:
+    name:
+      type: string
+    value:
+      type: string
+
+NetworkMockMark:
+  type: object
+  required: [ruleId, revision, outcome]
+  properties:
+    ruleId:
+      type: string
+    revision:
+      type: integer
+    outcome:
+      type: string
+    reason:
+      type: string
+      nullable: true
+
+NetworkRecord:
+  type: object
+  required: [recordId, seq, requestId, method, url, startedAtMs, state, bodyState]
+  properties:
+    recordId:
+      type: string
+    seq:
+      type: integer
+    requestId:
+      type: string
+    redirectOrdinal:
+      type: integer
+    tabId:
+      type: integer
+      nullable: true
+    tabTitle:
+      type: string
+      nullable: true
+    pageId:
+      type: integer
+      nullable: true
+    frameId:
+      type: string
+      nullable: true
+    method:
+      type: string
+    url:
+      type: string
+    resourceType:
+      type: string
+      nullable: true
+    requestHeaders:
+      type: array
+      items:
+        $ref: '#/NetworkHeaderPair'
+    postData:
+      type: string
+      nullable: true
+    status:
+      type: integer
+      nullable: true
+    statusText:
+      type: string
+      nullable: true
+    mimeType:
+      type: string
+      nullable: true
+    responseHeaders:
+      type: array
+      items:
+        $ref: '#/NetworkHeaderPair'
+    encodedDataLength:
+      type: integer
+      nullable: true
+    startedAtMs:
+      type: integer
+    finishedAtMs:
+      type: integer
+      nullable: true
+    fromCache:
+      type: boolean
+    fromServiceWorker:
+      type: boolean
+    state:
+      type: string
+    failure:
+      type: string
+      nullable: true
+    bodyState:
+      type: string
+    bodyReason:
+      type: string
+      nullable: true
+    mock:
+      $ref: '#/NetworkMockMark'
+
+NetworkRecordList:
+  type: object
+  required: [records]
+  properties:
+    records:
+      type: array
+      items:
+        $ref: '#/NetworkRecord'
+
+NetworkBodyPage:
+  type: object
+  required: [encoding, offset, total, truncated, data]
+  properties:
+    encoding:
+      type: string
+    offset:
+      type: integer
+    total:
+      type: integer
+    truncated:
+      type: boolean
+    data:
+      type: string
+    state:
+      type: string
+      nullable: true
+    mimeType:
+      type: string
+      nullable: true
+
+NetworkHandoffRequest:
+  type: object
+  required: [recordId]
+  properties:
+    recordId:
+      type: string
+
+NetworkHandoffCreated:
+  type: object
+  required: [handoffId, clipboardText, expiresAt]
+  properties:
+    handoffId:
+      type: string
+    clipboardText:
+      type: string
+    expiresAt:
+      type: integer
+
+NetworkHandoffSummary:
+  type: object
+  required: [id, createdAt, expiresAt, state, bodyState]
+  properties:
+    id:
+      type: string
+    createdAt:
+      type: integer
+    expiresAt:
+      type: integer
+    state:
+      type: string
+    ruleId:
+      type: string
+      nullable: true
+    source:
+      type: object
+      additionalProperties: true
+    requestHeaders:
+      type: string
+    bodyState:
+      type: string
+
+NetworkHandoffList:
+  type: object
+  required: [handoffs]
+  properties:
+    handoffs:
+      type: array
+      items:
+        $ref: '#/NetworkHandoffSummary'
+
+NetworkHandoffDetail:
+  type: object
+  required: [handoff]
+  properties:
+    handoff:
+      type: object
+      additionalProperties: true
+
+NetworkRule:
+  type: object
+  required:
+    [
+      id,
+      scope,
+      enabled,
+      state,
+      currentRevision,
+      createdAt,
+      updatedAt,
+    ]
+  properties:
+    id:
+      type: string
+    scope:
+      type: string
+    scopeTab:
+      type: integer
+      nullable: true
+    enabled:
+      type: boolean
+    state:
+      type: string
+    stateReason:
+      type: string
+      nullable: true
+    authorClient:
+      type: string
+      nullable: true
+    currentRevision:
+      type: integer
+    method:
+      type: string
+      nullable: true
+    pathname:
+      type: string
+      nullable: true
+    origin:
+      type: string
+      nullable: true
+    ignoreKeys:
+      type: array
+      items:
+        type: string
+    strictQuery:
+      type: boolean
+    responseStatus:
+      type: integer
+      nullable: true
+    lastHit:
+      type: object
+      additionalProperties: true
+    createdAt:
+      type: integer
+    updatedAt:
+      type: integer
+
+NetworkRuleList:
+  type: object
+  required: [rules]
+  properties:
+    rules:
+      type: array
+      items:
+        $ref: '#/NetworkRule'
+
+NetworkRulePatch:
+  type: object
+  properties:
+    enabled:
+      type: boolean
+      nullable: true
+    scope:
+      type: string
+      enum: [all_tabs, tab]
+    tabId:
+      type: integer
+      nullable: true
+
+NetworkRuleUpdated:
+  type: object
+  required: [ruleId, enabled, state, revision]
+  properties:
+    ruleId:
+      type: string
+    enabled:
+      type: boolean
+    state:
+      type: string
+    revision:
+      type: integer
+
+NetworkRestoreRequest:
+  type: object
+  required: [undoToken]
+  properties:
+    undoToken:
+      type: string
+
+NetworkRestoreResult:
+  type: object
+  required: [restored]
+  properties:
+    restored:
+      type: boolean
+    recordId:
+      type: string
+      nullable: true
+    ruleId:
+      type: string
+      nullable: true
+    state:
+      type: string
+      nullable: true
+
+NetworkDeleted:
+  type: object
+  required: [deleted]
+  properties:
+    deleted:
+      type: boolean
+    undoToken:
+      type: string
+      nullable: true
+    undoUntil:
+      type: integer
+      nullable: true
+
+NetworkRecordsCleared:
+  type: object
+  required: [deleted, all]
+  properties:
+    deleted:
+      type: integer
+    all:
+      type: boolean
+
+NetworkStopAllResult:
+  type: object
+  required: [disabled]
+  properties:
+    disabled:
+      type: integer
+
+NetworkHit:
+  type: object
+  required: [id, ruleId, revision, at, url, method, outcome]
+  properties:
+    id:
+      type: string
+    ruleId:
+      type: string
+    revision:
+      type: integer
+    at:
+      type: integer
+    tabTitle:
+      type: string
+      nullable: true
+    url:
+      type: string
+    method:
+      type: string
+    outcome:
+      type: string
+    reason:
+      type: string
+      nullable: true
+    networkId:
+      type: string
+      nullable: true
+
+NetworkHitList:
+  type: object
+  required: [hits]
+  properties:
+    hits:
+      type: array
+      items:
+        $ref: '#/NetworkHit'
+NetworkNearMiss:
+  type: object
+  required: [reason]
+  properties:
+    reason:
+      type: string
+    recordId:
+      type: string
+    method:
+      type: string
+    url:
+      type: string
+    tabTitle:
+      type: string
+      nullable: true
+    queryDiffs:
+      type: array
+      items:
+        type: object
+        additionalProperties: true
+    suggestion:
+      type: object
+      additionalProperties: true
+NetworkNearMissList:
+  type: object
+  required: [nearMisses]
+  properties:
+    nearMisses:
+      type: array
+      items:
+        $ref: '#/NetworkNearMiss'
+NetworkIgnoreKeysRequest:
+  type: object
+  required: [keys]
+  properties:
+    keys:
+      type: array
+      items:
+        type: string
+NetworkIgnoreKeysResult:
+  type: object
+  required: [ruleId, revision, ignoreKeys, state]
+  properties:
+    ruleId:
+      type: string
+    revision:
+      type: integer
+    ignoreKeys:
+      type: array
+      items:
+        type: string
+    state:
+      type: string

@@ -24,16 +24,12 @@ function render(
 }
 
 describe('CockpitOnboarding', () => {
-  it('first-run: hero, a paused video, and the start panel render', () => {
+  it('first-run: hero and the start panel render without onboarding video', () => {
     const html = render('first-run')
     expect(html).toContain('You watch. Your agent')
     expect(html).toContain('works.')
-    // The hero plays inline on demand, without a poster-to-lightbox step or a
-    // youtube embed (blocked from the extension origin).
-    expect(html).toContain('<video')
-    expect(html.toLowerCase()).not.toContain('autoplay')
-    expect(html).toContain('onboarding-recording/video.mp4')
-    expect(html).not.toContain('youtube-nocookie.com/embed')
+    expect(html).not.toContain('<video')
+    expect(html).not.toContain('onboarding-recording/video.mp4')
     expect(html).toContain('Hand off your first task')
     expect(html).toContain('Copy task')
     expect(html).toContain('Manage agents')

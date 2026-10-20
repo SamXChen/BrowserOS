@@ -483,6 +483,7 @@ async fn ctx(
         output_files: create_browser_output_file_access(),
         inner_call_hook: None,
         preloaded_helpers: Vec::new(),
+        network: None,
     }))
 }
 

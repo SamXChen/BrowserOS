@@ -67,6 +67,18 @@
       ]
     },
     {
+      "domain": "Fetch",
+      "types": ["HeaderEntry", "RequestPattern", "RequestStage"],
+      "commands": [
+        "continueRequest",
+        "disable",
+        "enable",
+        "failRequest",
+        "fulfillRequest"
+      ],
+      "events": ["requestPaused"]
+    },
+    {
       "domain": "History",
       "types": ["HistoryEntry"],
       "commands": ["deleteRange", "deleteUrl", "getRecent", "search"]
@@ -74,6 +86,31 @@
     {
       "domain": "Input",
       "commands": ["dispatchKeyEvent", "dispatchMouseEvent"]
+    },
+    {
+      "domain": "Network",
+      "types": [
+        "Headers",
+        "Initiator",
+        "Request",
+        "ResourceTiming",
+        "Response",
+        "SecurityDetails"
+      ],
+      "commands": [
+        "disable",
+        "enable",
+        "getRequestPostData",
+        "getResponseBody"
+      ],
+      "events": [
+        "loadingFailed",
+        "loadingFinished",
+        "requestWillBeSent",
+        "requestWillBeSentExtraInfo",
+        "responseReceived",
+        "responseReceivedExtraInfo"
+      ]
     },
     {
       "domain": "Page",

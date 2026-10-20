@@ -2,6 +2,7 @@ pub mod audit_log;
 pub mod entities;
 pub mod feedback_invite;
 mod migration;
+pub mod network;
 pub mod recording_index;
 pub mod run_error_budget;
 pub mod session_efficiency_stats;
@@ -9,6 +10,7 @@ pub mod session_tabs;
 pub mod skills;
 
 pub use audit_log::AuditLog;
+pub use network::NetworkRepository;
 pub use recording_index::{
     AppendDocumentBatch, LegacyClaimRow, LegacyRecordingRow, RecordingIndex, RecordingStreamRow,
     SessionTabWindow, StreamMatchRow,
@@ -448,7 +450,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 20);
+        assert_eq!(migrations.len(), 21);
         assert_eq!(
             migrations[0].try_get::<String>("", "version")?,
             "m0001_baseline"
@@ -666,7 +668,7 @@ mod tests {
         let migration_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM seaql_migrations")
             .fetch_one(&mut conn)
             .await?;
-        assert_eq!(migration_count, 20);
+        assert_eq!(migration_count, 21);
         conn.close().await?;
         Ok(())
     }
@@ -775,7 +777,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations ORDER BY version".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 20);
+        assert_eq!(migrations.len(), 21);
         assert_eq!(
             migrations
                 .iter()
@@ -798,7 +800,7 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("migration count missing"))?
             .try_get::<i64>("", "count")?;
-        assert_eq!(migration_count, 20);
+        assert_eq!(migration_count, 21);
         Ok(())
     }
 
@@ -934,7 +936,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 20);
+        assert_eq!(migrations.len(), 21);
         Ok(())
     }
 

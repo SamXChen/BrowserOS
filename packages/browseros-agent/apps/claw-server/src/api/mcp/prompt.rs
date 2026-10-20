@@ -41,6 +41,14 @@ inside run. A stale profile or closed strict pin requires explicit recovery and
 never redirects to the focused profile; default_profile_unavailable needs
 browser_target set."#;
 
+const NETWORK_GUIDANCE: &str = r#"Network mock handoff: when the user pastes a netref_* reference, call the network tool with action="handoff_get" and that handoffId. Do not rebuild the request from the URL, reopen the page, or patch fetch inside run.
+- Prefer action="rule_apply" with response.body {kind:"patch_sample", jsonPatch:[...]} for small edits; use literal only for a whole intentional body. Bodies over 512KiB are summarized by handoff_get: use patch_sample instead of trying to paste them.
+- Keep matcherSeed. Add ignoreKeys only for names like nonce/ts or values that differ across related samples. Use strictQuery or bodyFields when the user needs exact matching.
+- dryRun:true reports matched history, the winner, and replaced rules. Apply, then only say it is live when state is "active"; apply_failed and superseded are not success.
+- Rules apply to all tabs by default; say so, and note the Network panel switch can turn them off. Do not refresh the user's page unless they ask.
+- After the user refreshes, call rule_status. fulfilled/confirmed means it hit; nearMisses gives query/method/body differences; blocked usually means CORS; no_request_seen means the request was not emitted.
+- "Turn it off" is rule_apply enabled:false, not deletion. Delete only when asked; batch deletion requires restating the count and explicit confirmation. Finishing a task must not delete rules, handoffs, or the user's tabs."#;
+
 const PRESERVE_USEFUL_PAGES: &str = "- Preserve useful pages: leave anything the user may want to inspect open\n  instead of closing it when the task ends.";
 
 pub(in crate::api::mcp) const TASK_GROUP_CLEANUP: &str = "Close tab groups after the agent finishes a task: when your task is done, call tab_groups action=\"close\" groupId=\"<your task group id>\" for your own task groups only. Never close the user's or other agents' groups. Honor explicit user requests to keep results open.";
@@ -210,7 +218,7 @@ pub fn mcp_instructions(
     if native.supports(NativeFeature::ProfileTargeting) {
         paragraphs.push(PROFILE_GUIDANCE);
     }
-    paragraphs.extend([shared.as_str(), help, PAGE_CONTENT_GUARD]);
+    paragraphs.extend([shared.as_str(), NETWORK_GUIDANCE, help, PAGE_CONTENT_GUARD]);
     paragraphs.join("\n\n")
 }
 

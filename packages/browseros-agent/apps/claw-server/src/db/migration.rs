@@ -27,6 +27,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0018_add_feedback_invite::Migration),
             Box::new(m0019_add_feedback_invite_dismissal::Migration),
             Box::new(m0020_add_feedback_invite_snooze::Migration),
+            Box::new(m0021_network_rules::Migration),
         ]
     }
 }
@@ -2363,5 +2364,109 @@ mod m0020_add_feedback_invite_snooze {
     enum FeedbackInvite {
         Table,
         SnoozedAtMs,
+    }
+}
+
+/// Network interception: handoff snapshots, rules, immutable revisions and hits.
+///
+/// Capture records are deliberately absent: they live only in the running
+/// server's memory and temporary files (D3).
+mod m0021_network_rules {
+    use super::*;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0021_network_rules"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "CREATE TABLE IF NOT EXISTS net_handoffs (
+                        id TEXT PRIMARY KEY,
+                        created_at INTEGER NOT NULL,
+                        expires_at INTEGER NOT NULL,
+                        source_meta_json TEXT NOT NULL,
+                        request_headers_json TEXT NOT NULL,
+                        response_headers_json TEXT NOT NULL,
+                        request_body TEXT,
+                        body_id TEXT,
+                        body_state TEXT NOT NULL,
+                        body_reason TEXT,
+                        matcher_seed_json TEXT NOT NULL,
+                        suggested_ignore_json TEXT NOT NULL,
+                        related_json TEXT NOT NULL,
+                        state TEXT NOT NULL,
+                        rule_id TEXT,
+                        deleted_at INTEGER
+                    );
+                    CREATE INDEX IF NOT EXISTS net_handoffs_created_idx ON net_handoffs(created_at);
+                    CREATE INDEX IF NOT EXISTS net_handoffs_rule_idx ON net_handoffs(rule_id);
+
+                    CREATE TABLE IF NOT EXISTS net_rules (
+                        id TEXT PRIMARY KEY,
+                        scope_kind TEXT NOT NULL,
+                        scope_tab INTEGER,
+                        enabled INTEGER NOT NULL,
+                        state TEXT NOT NULL,
+                        state_reason TEXT,
+                        current_revision INTEGER NOT NULL,
+                        generation INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        author_client TEXT,
+                        deleted_at INTEGER
+                    );
+                    CREATE INDEX IF NOT EXISTS net_rules_state_idx ON net_rules(deleted_at, enabled, state);
+
+                    CREATE TABLE IF NOT EXISTS net_rule_revisions (
+                        rule_id TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        matcher_json TEXT NOT NULL,
+                        response_json TEXT NOT NULL,
+                        sample_headers_json TEXT NOT NULL,
+                        body_id TEXT,
+                        source_handoff_id TEXT,
+                        source_record_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY (rule_id, revision)
+                    );
+
+                    CREATE TABLE IF NOT EXISTS net_rule_hits (
+                        id TEXT PRIMARY KEY,
+                        rule_id TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        at_ms INTEGER NOT NULL,
+                        tab_title TEXT,
+                        url TEXT NOT NULL,
+                        method TEXT NOT NULL,
+                        outcome TEXT NOT NULL,
+                        reason TEXT,
+                        network_id TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS net_rule_hits_rule_idx ON net_rule_hits(rule_id, at_ms);",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS net_rule_hits;
+                     DROP TABLE IF EXISTS net_rule_revisions;
+                     DROP TABLE IF EXISTS net_rules;
+                     DROP TABLE IF EXISTS net_handoffs;",
+                )
+                .await?;
+            Ok(())
+        }
     }
 }

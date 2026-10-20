@@ -1,0 +1,538 @@
+state:
+  get:
+    operationId: getNetworkState
+    summary: Browser connection, capture state and rule counts.
+    responses:
+      '200':
+        description: Current network state.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkStatus
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+captures:
+  post:
+    operationId: startNetworkCapture
+    summary: Start capturing every ordinary tab. Idempotent while running.
+    responses:
+      '200':
+        description: Capture state.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkCaptureState
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: stopNetworkCapture
+    summary: Stop capture and discard the temporary record buffer.
+    responses:
+      '200':
+        description: Capture state after stopping.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkCaptureState
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+records:
+  get:
+    operationId: listNetworkRecords
+    summary: Records in ascending sequence order.
+    parameters:
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 500
+    responses:
+      '200':
+        description: Captured records.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRecordList
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: deleteNetworkRecords
+    summary: Clear the buffer without stopping capture.
+    responses:
+      '200':
+        description: Number of removed records.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRecordsCleared
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+record:
+  get:
+    operationId: getNetworkRecord
+    summary: One record's metadata and headers.
+    parameters:
+      - $ref: '#/parameters/RecordId'
+    responses:
+      '200':
+        description: The record.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRecord
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: deleteNetworkRecord
+    summary: Delete one record; the response carries an undo token.
+    parameters:
+      - $ref: '#/parameters/RecordId'
+    responses:
+      '200':
+        description: Deleted with an eight-second undo window.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkDeleted
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+requestBody:
+  get:
+    operationId: getNetworkRequestBody
+    summary: Request postData, paginated by byte offset.
+    parameters:
+      - $ref: '#/parameters/RecordId'
+      - $ref: '#/parameters/BodyOffset'
+      - $ref: '#/parameters/BodyLimit'
+    responses:
+      '200':
+        description: Request body page.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkBodyPage
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+responseBody:
+  get:
+    operationId: getNetworkResponseBody
+    summary: Response body, paginated by byte offset.
+    parameters:
+      - $ref: '#/parameters/RecordId'
+      - $ref: '#/parameters/BodyOffset'
+      - $ref: '#/parameters/BodyLimit'
+    responses:
+      '200':
+        description: Response body page.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkBodyPage
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+restoreRecord:
+  post:
+    operationId: restoreNetworkRecord
+    summary: Undo a record deletion inside the eight-second window.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkRestoreRequest
+    responses:
+      '200':
+        description: Restore result.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRestoreResult
+      '410':
+        $ref: ../responses.yaml#/Gone
+      '500':
+        $ref: ../responses.yaml#/InternalError
+handoffs:
+  get:
+    operationId: listNetworkHandoffs
+    summary: Handoff snapshots, newest first.
+    responses:
+      '200':
+        description: Handoffs.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkHandoffList
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  post:
+    operationId: createNetworkHandoff
+    summary: Freeze one record into a durable handoff and return the clipboard text.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkHandoffRequest
+    responses:
+      '200':
+        description: Created handoff.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkHandoffCreated
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+handoff:
+  get:
+    operationId: getNetworkHandoff
+    summary: Handoff snapshot without the body bytes.
+    parameters:
+      - $ref: '#/parameters/HandoffId'
+    responses:
+      '200':
+        description: Handoff detail.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkHandoffDetail
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '410':
+        $ref: ../responses.yaml#/Gone
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: deleteNetworkHandoff
+    summary: Delete a handoff and release its pinned body.
+    parameters:
+      - $ref: '#/parameters/HandoffId'
+    responses:
+      '200':
+        description: Deleted.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkDeleted
+      '500':
+        $ref: ../responses.yaml#/InternalError
+rules:
+  get:
+    operationId: listNetworkRules
+    summary: Mock rules with state, scope and last hit.
+    responses:
+      '200':
+        description: Rules.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRuleList
+      '500':
+        $ref: ../responses.yaml#/InternalError
+rule:
+  get:
+    operationId: getNetworkRule
+    summary: Rule detail with its current revision and recent hits.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Rule detail.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  patch:
+    operationId: patchNetworkRule
+    summary: Enable or disable one rule. Returns active only after Fetch was read back.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkRulePatch
+    responses:
+      '200':
+        description: Updated rule state.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRuleUpdated
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '409':
+        $ref: ../responses.yaml#/Conflict
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: deleteNetworkRule
+    summary: Soft-delete one rule; undo within eight seconds.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Deleted with an undo token.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkDeleted
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+ruleRestore:
+  post:
+    operationId: restoreNetworkRule
+    summary: Undo a rule deletion.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Restore result.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRestoreResult
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+ruleTest:
+  post:
+    operationId: testNetworkRule
+    summary: Run the stored matcher against the current capture buffer.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Match summary.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+revisions:
+  get:
+    operationId: listNetworkRuleRevisions
+    summary: Immutable rule revisions.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Revisions.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      '500':
+        $ref: ../responses.yaml#/InternalError
+revisionRestore:
+  post:
+    operationId: restoreNetworkRuleRevision
+    summary: Create a new revision from an older one.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+      - name: revision
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: New revision.
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+stopAll:
+  post:
+    operationId: stopAllNetworkMocks
+    summary: Disable every rule and narrow Fetch without deleting definitions.
+    responses:
+      '200':
+        description: Number of disabled rules.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkStopAllResult
+      '500':
+        $ref: ../responses.yaml#/InternalError
+hits:
+  get:
+    operationId: listNetworkHits
+    summary: Recent rule hits.
+    parameters:
+      - name: ruleId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 50
+    responses:
+      '200':
+        description: Hits.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkHitList
+      '500':
+        $ref: ../responses.yaml#/InternalError
+  delete:
+    operationId: deleteNetworkHits
+    summary: Clear the hit history for one rule.
+    parameters:
+      - name: ruleId
+        in: query
+        required: true
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Number of deleted hits.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkDeleted
+      '400':
+        $ref: ../responses.yaml#/BadRequest
+      '500':
+        $ref: ../responses.yaml#/InternalError
+events:
+  get:
+    operationId: streamNetworkEvents
+    summary: Server-sent capture, rule, hit and deletion events.
+    parameters:
+      - name: Last-Event-ID
+        in: header
+        required: false
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Event stream.
+        content:
+          text/event-stream:
+            schema:
+              type: string
+      '403':
+        $ref: ../responses.yaml#/Forbidden
+      '500':
+        $ref: ../responses.yaml#/InternalError
+parameters:
+  RecordId:
+    name: recordId
+    in: path
+    required: true
+    schema:
+      type: string
+  HandoffId:
+    name: id
+    in: path
+    required: true
+    schema:
+      type: string
+  RuleId:
+    name: id
+    in: path
+    required: true
+    schema:
+      type: string
+  BodyOffset:
+    name: offset
+    in: query
+    required: false
+    schema:
+      type: integer
+  BodyLimit:
+    name: limit
+    in: query
+    required: false
+    schema:
+      type: integer
+nearMisses:
+  get:
+    operationId: listNetworkRuleNearMisses
+    summary: Explain recent captured requests that did not match a rule.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    responses:
+      '200':
+        description: Near misses.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkNearMissList
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+ignoreKeys:
+  post:
+    operationId: fixNetworkRuleQueryMismatch
+    summary: Add ignored query keys and create a new revision.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkIgnoreKeysRequest
+    responses:
+      '200':
+        description: New revision.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkIgnoreKeysResult
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError

@@ -114,6 +114,9 @@ pub struct BrowserToolOptions {
     /// Helpers the host loads into the script runtime before the agent's code
     /// runs, exposed as `helpers.<name>`. Empty outside the host.
     pub preloaded_helpers: Vec<HelperSource>,
+    /// Host-owned network capture and mock state. `None` means the `network`
+    /// tool answers `network_unavailable`.
+    pub network: Option<Arc<dyn NetworkHost>>,
 }
 
 /// One request's execution view plus host capabilities. Cloning it preserves
@@ -129,6 +132,8 @@ pub struct ToolCtx {
     pub inner_call_hook: Option<Arc<dyn InnerCallHook>>,
     /// See [`BrowserToolOptions::preloaded_helpers`].
     pub preloaded_helpers: Vec<HelperSource>,
+    /// See [`BrowserToolOptions::network`].
+    pub network: Option<Arc<dyn NetworkHost>>,
 }
 
 impl ToolCtx {
@@ -142,6 +147,7 @@ impl ToolCtx {
             output_files: options.output_files,
             inner_call_hook: options.inner_call_hook,
             preloaded_helpers: options.preloaded_helpers,
+            network: options.network,
         }
     }
 
@@ -152,6 +158,31 @@ impl ToolCtx {
             Ok(())
         }
     }
+}
+
+/// Host capabilities for the `network` tool. `browseros-mcp` cannot reach the
+/// server's capture buffer, database or body files, so the host supplies them.
+/// Every method returns a JSON object that includes a human-readable `text`
+/// field alongside its structured fields.
+pub trait NetworkHost: Send + Sync {
+    fn status<'a>(&'a self) -> BoxFuture<'a, Result<Value, String>>;
+
+    fn handoff_get<'a>(
+        &'a self,
+        handoff_id: &'a str,
+        body_offset: u64,
+        body_limit: u64,
+    ) -> BoxFuture<'a, Result<Value, String>>;
+
+    fn rule_apply<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, String>>;
+
+    fn rule_status<'a>(
+        &'a self,
+        rule_id: Option<&'a str>,
+        handoff_id: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<Value, String>>;
+
+    fn cleanup<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, String>>;
 }
 
 /// Host capabilities for script ownership/audit and optional tool-operation ordering.

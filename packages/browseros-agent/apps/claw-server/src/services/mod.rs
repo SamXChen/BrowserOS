@@ -9,6 +9,7 @@ pub mod harness;
 pub mod harness_skills;
 pub mod help;
 pub mod helpers;
+pub mod network;
 pub mod profiles;
 pub mod recordings;
 pub mod replay;
