@@ -10,7 +10,7 @@
     "turbo.json"
   ],
   "globalEnv": ["CI"],
-  "globalPassThroughEnv": ["BROWSEROS_*", "NODE_ENV"],
+  "globalPassThroughEnv": ["BROWSEROS_*", "NODE_ENV", "OPENAPI_GENERATOR_JAR"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

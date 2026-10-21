@@ -523,7 +523,12 @@ async fn execute_with_cancellation(call: &ToolCall) -> DispatchExecution {
                 inner_call_hook,
                 preloaded_helpers,
                 network: Some(Arc::new(
-                    crate::api::mcp::network_host::ClawNetworkHost::new(call.state.clone()),
+                    crate::api::mcp::network_host::ClawNetworkHost::new(
+                        call.state.clone(),
+                        call.identity
+                            .as_ref()
+                            .map(|identity| identity.agent_label.clone()),
+                    ),
                 )),
             });
             // A tab group is destroyed when its last page is reparented. Explicit

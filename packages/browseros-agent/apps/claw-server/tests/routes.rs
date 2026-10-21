@@ -3123,3 +3123,93 @@ async fn network_surface_serves_state_captures_and_rejects_foreign_origins() -> 
     assert_eq!(stopped["running"], false);
     Ok(())
 }
+
+#[tokio::test]
+async fn network_patch_rule_requires_exactly_one_group() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    // The body is validated before the rule is looked up, so an unknown id
+    // still yields 400 for a malformed patch.
+    for patch in [json!({}), json!({ "enabled": true, "name": "x" })] {
+        let (status, body) = request_json(
+            &app.router,
+            "PATCH",
+            "/api/v1/network/rules/rule_missing",
+            Some(patch.clone()),
+        )
+        .await?;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "patch {patch} returned {body}"
+        );
+        assert_eq!(body["code"], json!("invalid_request"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_patch_unknown_rule_is_404() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    let (status, body) = request_json(
+        &app.router,
+        "PATCH",
+        "/api/v1/network/rules/rule_missing",
+        Some(json!({ "enabled": true })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], json!("rule_not_found"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_hits_use_the_contract_envelope() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    let (status, body) = request_json(&app.router, "GET", "/api/v1/network/hits", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["hits"].is_array(),
+        "hits must be an array, got {}",
+        body["hits"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_processor_test_unknown_rule_is_404() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    let (status, body) = request_json(
+        &app.router,
+        "POST",
+        "/api/v1/network/rules/rule_missing/processor-test",
+        Some(json!({})),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], json!("rule_not_found"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_reload_tab_without_browser_is_503() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    let (status, body) = request_json(
+        &app.router,
+        "POST",
+        "/api/v1/network/tabs/1/reload",
+        Some(json!({ "ignoreCache": false })),
+    )
+    .await?;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], json!("browser_unavailable"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_delete_all_rules_when_empty_returns_zero() -> anyhow::Result<()> {
+    let app = test_app().await?;
+    let (status, body) = request_json(&app.router, "DELETE", "/api/v1/network/rules", None).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deleted"], json!(0));
+    Ok(())
+}

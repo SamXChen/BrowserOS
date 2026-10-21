@@ -24,7 +24,6 @@ NetworkCaptureState:
       enum: [running, paused, stopped]
     startedAt:
       type: integer
-      nullable: true
     records:
       type: integer
     gapEvents:
@@ -36,35 +35,48 @@ NetworkCaptureState:
       items:
         $ref: '#/NetworkCaptureTab'
 
+NetworkBrowserState:
+  type: object
+  required: [connected]
+  properties:
+    connected:
+      type: boolean
+
+NetworkRulesState:
+  type: object
+  required: [active, total]
+  properties:
+    active:
+      type: integer
+    total:
+      type: integer
+
+NetworkRuntimeState:
+  type: object
+  properties:
+    paused:
+      type: integer
+    decisionP95Ms:
+      type: integer
+    rulesGeneration:
+      type: integer
+    processorP95Ms:
+      type: integer
+    processorInflight:
+      type: integer
+
 NetworkStatus:
   type: object
   required: [browser, capture, rules]
   properties:
     browser:
-      type: object
-      required: [connected]
-      properties:
-        connected:
-          type: boolean
+      $ref: '#/NetworkBrowserState'
     capture:
       $ref: '#/NetworkCaptureState'
     rules:
-      type: object
-      required: [active, total]
-      properties:
-        active:
-          type: integer
-        total:
-          type: integer
+      $ref: '#/NetworkRulesState'
     runtime:
-      type: object
-      properties:
-        paused:
-          type: integer
-        decisionP95Ms:
-          type: integer
-        rulesGeneration:
-          type: integer
+      $ref: '#/NetworkRuntimeState'
 
 NetworkHeaderPair:
   type: object
@@ -87,7 +99,6 @@ NetworkMockMark:
       type: string
     reason:
       type: string
-      nullable: true
 
 NetworkRecord:
   type: object
@@ -103,51 +114,40 @@ NetworkRecord:
       type: integer
     tabId:
       type: integer
-      nullable: true
     tabTitle:
       type: string
-      nullable: true
     pageId:
       type: integer
-      nullable: true
     frameId:
       type: string
-      nullable: true
     method:
       type: string
     url:
       type: string
     resourceType:
       type: string
-      nullable: true
     requestHeaders:
       type: array
       items:
         $ref: '#/NetworkHeaderPair'
     postData:
       type: string
-      nullable: true
     status:
       type: integer
-      nullable: true
     statusText:
       type: string
-      nullable: true
     mimeType:
       type: string
-      nullable: true
     responseHeaders:
       type: array
       items:
         $ref: '#/NetworkHeaderPair'
     encodedDataLength:
       type: integer
-      nullable: true
     startedAtMs:
       type: integer
     finishedAtMs:
       type: integer
-      nullable: true
     fromCache:
       type: boolean
     fromServiceWorker:
@@ -156,12 +156,10 @@ NetworkRecord:
       type: string
     failure:
       type: string
-      nullable: true
     bodyState:
       type: string
     bodyReason:
       type: string
-      nullable: true
     mock:
       $ref: '#/NetworkMockMark'
 
@@ -182,6 +180,9 @@ NetworkBodyPage:
       type: string
     offset:
       type: integer
+    length:
+      type: integer
+      description: Bytes in this window; set for rule and handoff samples.
     total:
       type: integer
     truncated:
@@ -190,10 +191,18 @@ NetworkBodyPage:
       type: string
     state:
       type: string
-      nullable: true
     mimeType:
       type: string
-      nullable: true
+
+NetworkEmptyRequest:
+  type: object
+
+NetworkTabReloadRequest:
+  type: object
+  required: [ignoreCache]
+  properties:
+    ignoreCache:
+      type: boolean
 
 NetworkHandoffRequest:
   type: object
@@ -204,7 +213,7 @@ NetworkHandoffRequest:
 
 NetworkHandoffCreated:
   type: object
-  required: [handoffId, clipboardText, expiresAt]
+  required: [handoffId, clipboardText, expiresAt, reused]
   properties:
     handoffId:
       type: string
@@ -212,6 +221,8 @@ NetworkHandoffCreated:
       type: string
     expiresAt:
       type: integer
+    reused:
+      type: boolean
 
 NetworkHandoffSummary:
   type: object
@@ -227,10 +238,8 @@ NetworkHandoffSummary:
       type: string
     ruleId:
       type: string
-      nullable: true
     source:
-      type: object
-      additionalProperties: true
+      $ref: '#/NetworkHandoffSource'
     requestHeaders:
       type: string
     bodyState:
@@ -250,8 +259,7 @@ NetworkHandoffDetail:
   required: [handoff]
   properties:
     handoff:
-      type: object
-      additionalProperties: true
+      $ref: '#/NetworkHandoffView'
 
 NetworkRule:
   type: object
@@ -268,48 +276,280 @@ NetworkRule:
   properties:
     id:
       type: string
+    name:
+      type: string
+    action:
+      $ref: '#/NetworkRuleAction'
+    matcher:
+      $ref: '#/NetworkMatcher'
     scope:
       type: string
     scopeTab:
       type: integer
-      nullable: true
     enabled:
       type: boolean
     state:
       type: string
     stateReason:
       type: string
-      nullable: true
     authorClient:
       type: string
-      nullable: true
     currentRevision:
+      type: integer
+    hitCount:
+      type: integer
+    responseStatus:
       type: integer
     method:
       type: string
-      nullable: true
     pathname:
       type: string
-      nullable: true
     origin:
       type: string
-      nullable: true
     ignoreKeys:
       type: array
       items:
         type: string
     strictQuery:
       type: boolean
-    responseStatus:
-      type: integer
-      nullable: true
     lastHit:
-      type: object
-      additionalProperties: true
+      $ref: '#/NetworkHit'
     createdAt:
       type: integer
     updatedAt:
       type: integer
+NetworkRuleDetail:
+  type: object
+  required: [rule, revision]
+  properties:
+    rule:
+      $ref: '#/NetworkRule'
+    revision:
+      $ref: '#/NetworkRuleRevision'
+    hits:
+      type: array
+      items:
+        $ref: '#/NetworkHit'
+    sample:
+      $ref: '#/NetworkSampleInfo'
+
+NetworkMatcher:
+  type: object
+  required: [method, queryPolicy, bodyFields, matcherVersion]
+  properties:
+    method:
+      type: string
+    origin:
+      type: string
+    pathname:
+      type: string
+    exactUrl:
+      type: string
+    sampleQuery:
+      type: array
+      items:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: string
+    queryPolicy:
+      $ref: '#/NetworkQueryPolicy'
+    bodyFields:
+      type: array
+      items:
+        $ref: '#/NetworkMatcherBodyField'
+    resourceType:
+      type: string
+    matcherVersion:
+      type: integer
+
+NetworkQueryPolicy:
+  type: object
+  required: [mode, ignoreKeys]
+  properties:
+    mode:
+      type: string
+      enum: [lenient, strict]
+    ignoreKeys:
+      type: array
+      items:
+        type: string
+
+NetworkMatcherBodyField:
+  type: object
+  required: [pointer]
+  properties:
+    pointer:
+      type: string
+    equals:
+      type: string
+
+NetworkStaticAction:
+  type: object
+  required: [kind, status, headers, delayMs, body]
+  properties:
+    kind:
+      type: string
+      enum: [static]
+    status:
+      type: integer
+    headers:
+      type: object
+      description: |-
+        Header overrides keyed by lower-cased name. Each value is a string, an
+        array of strings (several set-cookie lines), or null to delete every
+        header with that name.
+      additionalProperties: true
+    delayMs:
+      type: integer
+    body:
+      $ref: '#/NetworkBodyPreview'
+
+NetworkProcessorAction:
+  type: object
+  required: [kind, script, timeoutMs]
+  properties:
+    kind:
+      type: string
+      enum: [processor]
+    script:
+      type: string
+    timeoutMs:
+      type: integer
+
+NetworkRuleRevision:
+  type: object
+  required: [revision, matcher, action, source]
+  properties:
+    revision:
+      type: integer
+    createdAt:
+      type: integer
+    matcher:
+      $ref: '#/NetworkMatcher'
+    action:
+      $ref: '#/NetworkRuleAction'
+    source:
+      $ref: '#/NetworkRevisionSource'
+
+NetworkRuleRevisionList:
+  type: object
+  required: [revisions]
+  properties:
+    revisions:
+      type: array
+      items:
+        $ref: '#/NetworkRuleRevision'
+
+NetworkRuleTestResult:
+  type: object
+  required: [matched, considered, samples]
+  properties:
+    matched:
+      type: integer
+    considered:
+      type: integer
+    samples:
+      type: array
+      items:
+        $ref: '#/NetworkTestSample'
+
+NetworkRuleAction:
+  type: object
+  required: [kind]
+  properties:
+    kind:
+      type: string
+      enum: [static, processor]
+    status:
+      type: integer
+    headers:
+      type: object
+      description: |-
+        Header overrides keyed by lower-cased name. Each value is a string, an
+        array of strings (several set-cookie lines), or null to delete every
+        header with that name.
+      additionalProperties: true
+    delayMs:
+      type: integer
+    script:
+      type: string
+    timeoutMs:
+      type: integer
+    body:
+      $ref: '#/NetworkBodyPreview'
+
+NetworkBodyPreview:
+  type: object
+  properties:
+    bytes:
+      type: integer
+    encoding:
+      type: string
+      enum: [utf8, binary]
+    preview:
+      type: string
+
+NetworkSampleInfo:
+  type: object
+  required: [available]
+  properties:
+    available:
+      type: boolean
+    status:
+      type: integer
+    bytes:
+      type: integer
+
+NetworkRevisionSource:
+  type: object
+  properties:
+    handoffId:
+      type: string
+    recordId:
+      type: string
+    tabId:
+      type: integer
+
+NetworkTestSample:
+  type: object
+  required: [recordId, method, url]
+  properties:
+    recordId:
+      type: string
+    method:
+      type: string
+    url:
+      type: string
+    status:
+      type: integer
+    tabTitle:
+      type: string
+    at:
+      type: integer
+
+NetworkProcessorTestResult:
+  type: object
+  required: [outcome]
+  properties:
+    outcome:
+      type: string
+      enum: [processed, passthrough, error, timeout]
+    status:
+      type: integer
+    headers:
+      $ref: '#/NetworkHeaderList'
+    body:
+      $ref: '#/NetworkBodyPreview'
+    logs:
+      type: array
+      items:
+        type: string
+    elapsedMs:
+      type: integer
+    error:
+      type: string
 
 NetworkRuleList:
   type: object
@@ -321,29 +561,31 @@ NetworkRuleList:
         $ref: '#/NetworkRule'
 
 NetworkRulePatch:
+  description: Exactly one of the four groups may be present.
   type: object
   properties:
     enabled:
       type: boolean
-      nullable: true
     scope:
       type: string
       enum: [all_tabs, tab]
     tabId:
       type: integer
-      nullable: true
+    name:
+      type: string
 
 NetworkRuleUpdated:
   type: object
-  required: [ruleId, enabled, state, revision]
+  required: [rule]
   properties:
-    ruleId:
-      type: string
-    enabled:
-      type: boolean
-    state:
-      type: string
-    revision:
+    rule:
+      $ref: '#/NetworkRule'
+
+NetworkRulesDeleted:
+  type: object
+  required: [deleted]
+  properties:
+    deleted:
       type: integer
 
 NetworkRestoreRequest:
@@ -361,13 +603,10 @@ NetworkRestoreResult:
       type: boolean
     recordId:
       type: string
-      nullable: true
     ruleId:
       type: string
-      nullable: true
     state:
       type: string
-      nullable: true
 
 NetworkDeleted:
   type: object
@@ -377,10 +616,15 @@ NetworkDeleted:
       type: boolean
     undoToken:
       type: string
-      nullable: true
     undoUntil:
       type: integer
-      nullable: true
+
+NetworkHitsDeleted:
+  type: object
+  required: [deleted]
+  properties:
+    deleted:
+      type: integer
 
 NetworkRecordsCleared:
   type: object
@@ -393,10 +637,12 @@ NetworkRecordsCleared:
 
 NetworkStopAllResult:
   type: object
-  required: [disabled]
+  required: [disabled, narrowed]
   properties:
     disabled:
       type: integer
+    narrowed:
+      type: boolean
 
 NetworkHit:
   type: object
@@ -412,7 +658,6 @@ NetworkHit:
       type: integer
     tabTitle:
       type: string
-      nullable: true
     url:
       type: string
     method:
@@ -421,10 +666,8 @@ NetworkHit:
       type: string
     reason:
       type: string
-      nullable: true
     networkId:
       type: string
-      nullable: true
 
 NetworkHitList:
   type: object
@@ -448,42 +691,71 @@ NetworkNearMiss:
       type: string
     tabTitle:
       type: string
-      nullable: true
     queryDiffs:
       type: array
       items:
-        type: object
-        additionalProperties: true
-    suggestion:
-      type: object
-      additionalProperties: true
-NetworkNearMissList:
+        $ref: '#/NetworkQueryDiff'
+    blockedBy:
+      type: string
+      enum: [cors]
+NetworkHandoffSource:
   type: object
-  required: [nearMisses]
+  required: [recordId, method, url]
   properties:
-    nearMisses:
-      type: array
-      items:
-        $ref: '#/NetworkNearMiss'
-NetworkIgnoreKeysRequest:
+    recordId:
+      type: string
+    method:
+      type: string
+    url:
+      type: string
+    status:
+      type: integer
+    tabId:
+      type: integer
+    tabTitle:
+      type: string
+    resourceType:
+      type: string
+
+NetworkHandoffView:
   type: object
-  required: [keys]
+  required: [id, createdAt, expiresAt, bodyState]
   properties:
-    keys:
-      type: array
-      items:
-        type: string
-NetworkIgnoreKeysResult:
-  type: object
-  required: [ruleId, revision, ignoreKeys, state]
-  properties:
+    id:
+      type: string
+    createdAt:
+      type: integer
+    expiresAt:
+      type: integer
     ruleId:
       type: string
-    revision:
-      type: integer
-    ignoreKeys:
+    source:
+      $ref: '#/NetworkHandoffSource'
+    requestHeaders:
+      $ref: '#/NetworkHeaderList'
+    requestBody:
+      type: string
+    responseHeaders:
+      $ref: '#/NetworkHeaderList'
+    bodyState:
+      type: string
+
+NetworkHeaderList:
+  type: array
+  items:
+    $ref: '#/NetworkHeaderPair'
+
+NetworkQueryDiff:
+  type: object
+  required: [key]
+  properties:
+    key:
+      type: string
+    sample:
       type: array
       items:
         type: string
-    state:
-      type: string
+    actual:
+      type: array
+      items:
+        type: string

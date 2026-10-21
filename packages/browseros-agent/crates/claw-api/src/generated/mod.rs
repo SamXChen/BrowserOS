@@ -10,6 +10,8 @@ pub mod dispatches;
 pub use self::dispatches::*;
 pub mod feedback;
 pub use self::feedback::*;
+pub mod network;
+pub use self::network::*;
 pub mod recordings;
 pub use self::recordings::*;
 pub mod sessions;

@@ -28,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0019_add_feedback_invite_dismissal::Migration),
             Box::new(m0020_add_feedback_invite_snooze::Migration),
             Box::new(m0021_network_rules::Migration),
+            Box::new(m0022_network_rules_v2::Migration),
         ]
     }
 }
@@ -2451,6 +2452,124 @@ mod m0021_network_rules {
                         network_id TEXT
                     );
                     CREATE INDEX IF NOT EXISTS net_rule_hits_rule_idx ON net_rule_hits(rule_id, at_ms);",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS net_rule_hits;
+                     DROP TABLE IF EXISTS net_rule_revisions;
+                     DROP TABLE IF EXISTS net_rules;
+                     DROP TABLE IF EXISTS net_handoffs;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Recreates the network tables in their final shape.
+///
+/// Deliberately destructive: earlier rules, handoffs and hits are dropped
+/// rather than migrated, so no compatibility shims are needed anywhere else.
+pub mod m0022_network_rules_v2 {
+    use super::*;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0022_network_rules_v2"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS net_rule_hits;
+                     DROP TABLE IF EXISTS net_rule_revisions;
+                     DROP TABLE IF EXISTS net_rules;
+                     DROP TABLE IF EXISTS net_handoffs;
+
+                     CREATE TABLE net_handoffs (
+                         id TEXT PRIMARY KEY,
+                         created_at INTEGER NOT NULL,
+                         expires_at INTEGER NOT NULL,
+                         record_id TEXT NOT NULL,
+                         source_meta_json TEXT NOT NULL,
+                         request_headers_json TEXT NOT NULL,
+                         response_headers_json TEXT NOT NULL,
+                         request_body TEXT,
+                         body_id TEXT,
+                         body_bytes INTEGER NOT NULL DEFAULT 0,
+                         body_state TEXT NOT NULL,
+                         body_reason TEXT,
+                         matcher_seed_json TEXT NOT NULL,
+                         suggested_ignore_json TEXT NOT NULL,
+                         related_json TEXT NOT NULL,
+                         rule_id TEXT
+                     );
+                     CREATE INDEX net_handoffs_created_idx ON net_handoffs(created_at);
+                     CREATE INDEX net_handoffs_record_idx ON net_handoffs(record_id);
+
+                     CREATE TABLE net_rules (
+                         id TEXT PRIMARY KEY,
+                         name TEXT NOT NULL,
+                         scope_kind TEXT NOT NULL,
+                         scope_tab INTEGER,
+                         enabled INTEGER NOT NULL,
+                         state TEXT NOT NULL,
+                         state_reason TEXT,
+                         current_revision INTEGER NOT NULL,
+                         hit_count INTEGER NOT NULL DEFAULT 0,
+                         last_hit_at INTEGER,
+                         author_client TEXT,
+                         created_at INTEGER NOT NULL,
+                         updated_at INTEGER NOT NULL,
+                         deleted_at INTEGER
+                     );
+                     CREATE INDEX net_rules_state_idx ON net_rules(deleted_at, enabled, state);
+                     CREATE UNIQUE INDEX net_rules_name_uidx ON net_rules(name COLLATE NOCASE) WHERE deleted_at IS NULL;
+
+                     CREATE TABLE net_rule_revisions (
+                         rule_id TEXT NOT NULL,
+                         revision INTEGER NOT NULL,
+                         matcher_json TEXT NOT NULL,
+                         action_json TEXT NOT NULL,
+                         body_id TEXT,
+                         sample_rev INTEGER NOT NULL,
+                         sample_available INTEGER NOT NULL,
+                         sample_status INTEGER,
+                         sample_headers_json TEXT NOT NULL,
+                         sample_request_json TEXT NOT NULL,
+                         source_handoff_id TEXT,
+                         source_record_id TEXT,
+                         source_tab_id INTEGER,
+                         created_at INTEGER NOT NULL,
+                         PRIMARY KEY (rule_id, revision)
+                     );
+
+                     CREATE TABLE net_rule_hits (
+                         id TEXT PRIMARY KEY,
+                         rule_id TEXT NOT NULL,
+                         revision INTEGER NOT NULL,
+                         at_ms INTEGER NOT NULL,
+                         tab_title TEXT,
+                         url TEXT NOT NULL,
+                         method TEXT NOT NULL,
+                         outcome TEXT NOT NULL,
+                         reason TEXT,
+                         network_id TEXT
+                     );
+                     CREATE INDEX net_rule_hits_rule_idx ON net_rule_hits(rule_id, at_ms);
+                     CREATE INDEX net_rule_hits_network_idx ON net_rule_hits(rule_id, network_id);",
                 )
                 .await?;
             Ok(())

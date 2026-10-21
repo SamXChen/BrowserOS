@@ -156,6 +156,32 @@ describe('ClawApiClient', () => {
     )
   })
 
+  it('runs a processor rule on its own route', async () => {
+    const requests: Request[] = []
+    const client = new ClawApiClient(baseUrl, {
+      fetch: async (input, init) => {
+        const request =
+          input instanceof Request ? input : new Request(input, init)
+        requests.push(request)
+        return Response.json({
+          outcome: 'processed',
+          status: 200,
+          elapsedMs: 3,
+        })
+      },
+    })
+
+    await expect(
+      client.testNetworkProcessor({ id: 'rule_1' }),
+    ).resolves.toEqual({ outcome: 'processed', status: 200, elapsedMs: 3 })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.method).toBe('POST')
+    expect(new URL(requests[0]?.url ?? '').pathname).toBe(
+      '/api/v1/network/rules/rule_1/processor-test',
+    )
+    await expect(requests[0]?.text()).resolves.toBe('{}')
+  })
+
   it('saves and removes the decision model token on its own route', async () => {
     const requests: Request[] = []
     const client = new ClawApiClient(baseUrl, {

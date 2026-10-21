@@ -288,6 +288,8 @@ mod tests {
 
 #[cfg(test)]
 mod network_skill_tests {
+    #![allow(clippy::expect_used)]
+
     const REPO_SKILL: &str = include_str!("../../../../../../skills/browseros-neo/SKILL.md");
 
     #[test]
@@ -298,6 +300,29 @@ mod network_skill_tests {
             assert!(text.contains("state: \"active\""));
             assert!(text.contains("nearMisses"));
             assert!(text.contains("Never save `handoffId`"));
+            assert!(text.contains("rule_list"));
+            assert!(text.contains("`rule`"));
+            assert!(text.contains("processor"));
         }
+    }
+
+    fn network_section(text: &str) -> &str {
+        let start = text
+            .find("## Network mock handoff")
+            .expect("network section exists");
+        let rest = &text[start..];
+        match rest.find("\n## ") {
+            Some(offset) => &rest[..offset],
+            None => rest,
+        }
+    }
+
+    #[test]
+    fn both_skill_copies_share_the_network_section() {
+        assert_eq!(
+            network_section(super::EMBEDDED_BROWSERCLAW_SKILL),
+            network_section(REPO_SKILL),
+            "the two copies must stay identical"
+        );
     }
 }

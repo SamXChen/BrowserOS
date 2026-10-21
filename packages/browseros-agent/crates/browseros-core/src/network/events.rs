@@ -119,6 +119,26 @@ pub fn headers_from_value(value: &Value) -> Vec<HeaderPair> {
         .collect()
 }
 
+/// `Fetch.requestPaused` delivers headers as an ordered `[{ name, value }]`
+/// list, unlike the `Network.*` events, which use an object.
+#[must_use]
+pub fn header_pairs_from_value(value: &Value) -> Vec<HeaderPair> {
+    let Value::Array(items) = value else {
+        return headers_from_value(value);
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let name = item.get("name")?.as_str()?;
+            let value = item
+                .get("value")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Some(HeaderPair::new(name.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 /// Extra info arrives after the first event and is authoritative for headers
 /// such as `Cookie`. Replace the whole list when it carries any entries.
 pub fn merge_headers(target: &mut Vec<HeaderPair>, extra: &Value) {
@@ -154,6 +174,28 @@ mod tests {
         assert_eq!(event.request.method, "GET");
         assert_eq!(event.resource_type.as_deref(), Some("XHR"));
         assert_eq!(headers_from_value(&event.request.headers).len(), 1);
+    }
+
+    #[test]
+    fn fetch_paused_headers_are_an_ordered_pair_list() {
+        let headers = header_pairs_from_value(&json!([
+            { "name": "Location", "value": "/next" },
+            { "name": "Content-Length", "value": "0" },
+            { "name": "Location", "value": "again" }
+        ]));
+        assert_eq!(
+            headers,
+            vec![
+                HeaderPair::new("Location", "/next"),
+                HeaderPair::new("Content-Length", "0"),
+                HeaderPair::new("Location", "again"),
+            ],
+            "order and duplicates survive"
+        );
+        assert!(
+            header_pairs_from_value(&json!({ "accept": "*/*" })).len() == 1,
+            "object-shaped headers still parse"
+        );
     }
 
     #[test]

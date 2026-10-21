@@ -158,3 +158,77 @@ describe('skills API fixtures', () => {
     expect(Number.isSafeInteger(entry.installs as number)).toBe(true)
   })
 })
+
+describe('network API fixtures', () => {
+  test('rule fixture matches the contract required fields', () => {
+    const rule = fixture('network-rule.json') as Record<string, unknown>
+    const schemas = yaml('schemas/network.yaml') as {
+      NetworkRule: { required: string[] }
+    }
+    for (const key of schemas.NetworkRule.required) {
+      expect(rule).toHaveProperty(key)
+    }
+    expect(jsonRoundTrip(rule)).toEqual(rule)
+    expect(rule.scope).toBe('tab')
+    expect(rule.state).toBe('active')
+    expect(rule.action).toBe('static')
+  })
+
+  test('rule detail fixture carries a typed revision and sample', () => {
+    const detail = fixture('network-rule-detail.json') as {
+      rule: Record<string, unknown>
+      revision: {
+        action: { kind: string; headers: Record<string, unknown> }
+        source: { tabId: number }
+      }
+      sample: { available: boolean }
+    }
+    expect(detail.rule.state).toBe('pending')
+    expect(detail.rule.stateReason).toBe('no_tab')
+    expect(['static', 'processor']).toContain(detail.revision.action.kind)
+    expect(detail.revision.action.headers['set-cookie']).toBeArray()
+    expect(detail.revision.action.headers['x-debug']).toBeNull()
+    expect(detail.revision.source.tabId).toBe(49351)
+    expect(detail.sample.available).toBe(true)
+    expect(jsonRoundTrip(detail)).toEqual(detail)
+  })
+
+  test('processor rule detail fixture carries the script and timeout', () => {
+    const detail = fixture('network-rule-detail-processor.json') as {
+      rule: { action: string; state: string }
+      revision: {
+        action: { kind: string; script?: string; timeoutMs?: number }
+      }
+      sample: { available: boolean }
+    }
+    expect(detail.rule.action).toBe('processor')
+    expect(detail.rule.state).toBe('active')
+    expect(detail.revision.action.kind).toBe('processor')
+    expect(detail.revision.action.script).toContain('function process')
+    expect(detail.revision.action.timeoutMs).toBe(200)
+    expect(detail.sample.available).toBe(true)
+    expect(jsonRoundTrip(detail)).toEqual(detail)
+  })
+
+  test('status fixture carries the runtime block', () => {
+    const status = fixture('network-status.json') as {
+      browser: { connected: boolean }
+      capture: { running: boolean }
+      rules: { active: number; total: number }
+      runtime: {
+        paused: number
+        decisionP95Ms: number
+        rulesGeneration: number
+        processorP95Ms: number
+        processorInflight: number
+      }
+    }
+    expect(status.browser.connected).toBe(true)
+    expect(status.capture.running).toBe(true)
+    expect(status.rules.active).toBeLessThanOrEqual(status.rules.total)
+    expect(status.runtime.rulesGeneration).toBeGreaterThan(0)
+    expect(status.runtime.processorP95Ms).toBeGreaterThan(0)
+    expect(status.runtime.processorInflight).toBe(0)
+    expect(jsonRoundTrip(status)).toEqual(status)
+  })
+})

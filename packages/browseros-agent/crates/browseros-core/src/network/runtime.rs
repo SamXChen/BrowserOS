@@ -9,10 +9,15 @@
 use super::{
     events::{
         LoadingFailed, LoadingFinished, RequestWillBeSent, RequestWillBeSentExtraInfo,
-        ResponseReceived, ResponseReceivedExtraInfo, headers_from_value, merge_headers,
+        ResponseReceived, ResponseReceivedExtraInfo, header_pairs_from_value, headers_from_value,
+        merge_headers,
     },
     matcher::{EndpointMatcher, matches, parse_url_parts},
-    response::{FulfillPlan, MockResponse, build_fulfill, escape_url_pattern},
+    response::{
+        FulfillPlan, NoopProcessor, ProcessorErrorKind, ProcessorHooks, ProcessorInput,
+        ProcessorResult, ProcessorSpec, ResponseProcessor, StaticResponse, build_fulfill,
+        build_processed, escape_url_pattern,
+    },
     state::{BodyState, HeaderPair, NetworkRecord, RecordState},
 };
 use crate::{BrowserSession, PageId, ProtocolSession, SessionId};
@@ -34,16 +39,9 @@ const MAX_BODY_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_POST_DATA_BYTES: u64 = 1024 * 1024;
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 const BODY_CONCURRENCY: usize = 4;
-// Browser-level auto-attach does not reliably fire for tabs created through the
-// native PageManager path, so a new-tab target trigger is used instead. The
-// acceptance rule allows a missing first request if the UI says so.
-const AUTO_ATTACH_NEW_TABS: bool = false;
-// Direct attach on targetCreated races the native PageManager attachment; the
-// acceptance rule permits a missed first request with a UI warning.
-const ATTACH_ON_TARGET_CREATED: bool = false;
 
 /// One attached page, resolved for tab-scoped rules and for display.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabSummary {
     pub tab_id: i64,
@@ -92,10 +90,26 @@ pub enum RuntimeEvent {
         reason: Option<String>,
     },
     Hit(HitRecord),
+    /// The reconcile loop confirmed a rule snapshot; lets the host move rules
+    /// from `pending` to `active` without polling.
+    Applied(ApplyReport),
     Tabs(Vec<TabSummary>),
     Gap {
         lost: u64,
     },
+}
+
+/// What the runtime does when a rule matches.
+#[derive(Debug, Clone)]
+pub enum RuntimeAction {
+    /// Fulfill from the stored response; the request never reaches upstream.
+    Static {
+        response: StaticResponse,
+        body: Arc<[u8]>,
+        sample_headers: Arc<[HeaderPair]>,
+    },
+    /// Let the request through, then rewrite the upstream response.
+    Processor { spec: Arc<ProcessorSpec> },
 }
 
 #[derive(Debug, Clone)]
@@ -105,18 +119,14 @@ pub struct RuntimeRule {
     /// `None` means all tabs.
     pub scope_tab: Option<i64>,
     pub matcher: EndpointMatcher,
-    pub response: MockResponse,
-    /// Response body bytes, preloaded when the rule was applied.
-    pub body: Vec<u8>,
-    /// Sample response headers inherited by the mock response.
-    pub sample_headers: Vec<HeaderPair>,
+    pub action: RuntimeAction,
     /// Rule update time; the winner tie-break prefers the newest rule.
     pub updated_at: i64,
 }
 
 impl RuntimeRule {
     /// Fewer body fields and more ignored query keys are less strict, so the
-    /// winner sort prefers the strictest rule (design §4).
+    /// winner sort prefers the strictest rule.
     fn strictness(&self) -> (usize, isize, i64) {
         (
             self.matcher.body_fields.len(),
@@ -149,9 +159,13 @@ impl RuntimeRuleSet {
                 } else {
                     format!("{}{}", rule.matcher.origin, rule.matcher.pathname)
                 };
+                let stage = match &rule.action {
+                    RuntimeAction::Static { .. } => "Request",
+                    RuntimeAction::Processor { .. } => "Response",
+                };
                 let mut pattern = json!({
                     "urlPattern": escape_url_pattern(&literal),
-                    "requestStage": "Request",
+                    "requestStage": stage,
                 });
                 if let Some(resource_type) = &rule.matcher.resource_type {
                     pattern["resourceType"] = Value::String(resource_type.clone());
@@ -168,14 +182,25 @@ pub struct RuntimeStats {
     pub paused: usize,
     pub decision_p95_ms: u64,
     pub rules_generation: u64,
+    pub processor_p95_ms: u64,
+    pub processor_inflight: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ApplyReport {
-    /// Sessions where the new rule generation is acknowledged and Fetch is on.
-    pub sessions: usize,
+    /// The snapshot generation this report describes.
+    pub generation: u64,
+    /// Live sessions seen by the reconcile tick that produced the report.
+    pub total: usize,
+    /// Sessions that acknowledged this generation and have Fetch on.
+    pub acked: usize,
     /// Sessions that still have the Fetch domain enabled (any generation).
     pub fetch_enabled: usize,
+    /// A newer generation already replaced this snapshot, so the runtime
+    /// ignored it without touching anything.
+    pub stale: bool,
+    /// `apply_rules` gave up before any session acknowledged.
+    pub timed_out: bool,
 }
 
 #[derive(Debug)]
@@ -261,10 +286,70 @@ struct Shared {
     auto_pages: std::sync::Mutex<HashMap<String, SessionId>>,
     paused_inflight: AtomicUsize,
     decision_times: StdMutex<VecDeque<u64>>,
+    processor_times: StdMutex<VecDeque<u64>>,
+    processor_inflight: StdMutex<HashMap<SessionId, usize>>,
     pending_hits: StdMutex<HashMap<String, HitRecord>>,
+    /// The sandbox that rewrites upstream responses.
+    processor: Arc<dyn ResponseProcessor>,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            capture: AtomicBool::new(false),
+            rules: RwLock::new(Arc::new(RuntimeRuleSet::default())),
+            release: RwLock::new(CancellationToken::new()),
+            sequence: AtomicU64::new(0),
+            apply_waiters: std::sync::Mutex::new(Vec::new()),
+            children: std::sync::Mutex::new(HashMap::new()),
+            auto_pages: std::sync::Mutex::new(HashMap::new()),
+            paused_inflight: AtomicUsize::new(0),
+            decision_times: StdMutex::new(VecDeque::new()),
+            processor_times: StdMutex::new(VecDeque::new()),
+            processor_inflight: StdMutex::new(HashMap::new()),
+            pending_hits: StdMutex::new(HashMap::new()),
+            processor: Arc::new(NoopProcessor),
+        }
+    }
 }
 
 impl Shared {
+    /// Generations are strictly monotonic, so an older snapshot
+    /// must never replace a newer one. Returns false when the snapshot was
+    /// rejected; the caller's ack already carries `stale`.
+    fn apply_command_rules(
+        &self,
+        rules: Arc<RuntimeRuleSet>,
+        ack: Option<oneshot::Sender<ApplyReport>>,
+    ) -> bool {
+        let generation = rules.generation;
+        if generation < self.rules().generation {
+            if let Some(ack) = ack {
+                let _ = ack.send(ApplyReport {
+                    generation,
+                    stale: true,
+                    ..ApplyReport::default()
+                });
+            }
+            return false;
+        }
+        if let Ok(mut slot) = self.rules.write() {
+            *slot = rules;
+        }
+        // Any in-flight delay or fulfill decision belongs to the previous rule
+        // generation: release it now.
+        if let Ok(mut slot) = self.release.write() {
+            slot.cancel();
+            *slot = CancellationToken::new();
+        }
+        if let Some(ack) = ack
+            && let Ok(mut waiters) = self.apply_waiters.lock()
+        {
+            waiters.push(ack);
+        }
+        true
+    }
+
     fn rules(&self) -> Arc<RuntimeRuleSet> {
         self.rules
             .read()
@@ -300,6 +385,53 @@ impl Shared {
         }
     }
 
+    fn record_processor(&self, elapsed_ms: u64) {
+        if let Ok(mut times) = self.processor_times.lock() {
+            times.push_back(elapsed_ms);
+            while times.len() > 200 {
+                times.pop_front();
+            }
+        }
+    }
+
+    fn enter_processor(self: &Arc<Self>, session: &SessionId) -> ProcessorGuard {
+        if let Ok(mut map) = self.processor_inflight.lock() {
+            *map.entry(session.clone()).or_insert(0) += 1;
+        }
+        ProcessorGuard {
+            shared: Arc::clone(self),
+            session: session.clone(),
+        }
+    }
+
+    fn leave_processor(&self, session: &SessionId) {
+        if let Ok(mut map) = self.processor_inflight.lock()
+            && let Some(count) = map.get_mut(session)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                map.remove(session);
+            }
+        }
+    }
+
+    /// Waits up to 1500ms for body reads on this session to finish, so a
+    /// `Fetch.disable` cannot drop an in-flight `getResponseBody`.
+    async fn wait_processor_idle(&self, session: &SessionId) {
+        for _ in 0..30 {
+            let busy = self
+                .processor_inflight
+                .lock()
+                .map(|map| map.get(session).copied().unwrap_or(0))
+                .unwrap_or(0);
+            if busy == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        warn!(session = %session, "fetch disabled with processor body read in flight");
+    }
+
     fn stats(&self) -> RuntimeStats {
         let mut times = self
             .decision_times
@@ -307,6 +439,12 @@ impl Shared {
             .map(|times| times.iter().copied().collect::<Vec<_>>())
             .unwrap_or_default();
         times.sort_unstable();
+        let processor_p95_ms = percentile_lock(&self.processor_times);
+        let processor_inflight = self
+            .processor_inflight
+            .lock()
+            .map(|map| map.values().sum())
+            .unwrap_or(0);
         let p95 = if times.is_empty() {
             0
         } else {
@@ -316,6 +454,8 @@ impl Shared {
             paused: self.paused_inflight.load(Ordering::Relaxed),
             decision_p95_ms: p95,
             rules_generation: self.rules().generation,
+            processor_p95_ms,
+            processor_inflight,
         }
     }
 }
@@ -342,6 +482,7 @@ impl NetworkRuntime {
     pub fn spawn(
         session: Arc<BrowserSession>,
         events: mpsc::UnboundedSender<RuntimeEvent>,
+        processor: Arc<dyn ResponseProcessor>,
     ) -> NetworkRuntimeHandle {
         let shared = Arc::new(Shared {
             capture: AtomicBool::new(false),
@@ -354,6 +495,9 @@ impl NetworkRuntime {
             paused_inflight: AtomicUsize::new(0),
             decision_times: StdMutex::new(VecDeque::new()),
             pending_hits: StdMutex::new(HashMap::new()),
+            processor_times: StdMutex::new(VecDeque::new()),
+            processor_inflight: StdMutex::new(HashMap::new()),
+            processor,
         });
         let cancel = CancellationToken::new();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -387,6 +531,20 @@ impl NetworkRuntime {
     }
 }
 
+/// `Network.enable` parameters; identical for page and OOPIF sessions.
+fn network_enable_params() -> Value {
+    json!({
+        "maxTotalBufferSize": 64 * 1024 * 1024,
+        "maxResourceBufferSize": 8 * 1024 * 1024,
+        "maxPostDataSize": MAX_POST_DATA_BYTES,
+    })
+}
+
+/// `Fetch.enable` parameters for the current snapshot.
+fn fetch_enable_params(patterns: Vec<Value>) -> Value {
+    json!({ "patterns": patterns, "handleAuthRequests": false })
+}
+
 async fn reconcile_loop(
     pages: Arc<crate::pages::PageManager>,
     connection: Arc<dyn crate::connection::CdpConnection>,
@@ -405,6 +563,10 @@ async fn reconcile_loop(
         patterns: Vec<Value>,
     }
 
+    /// Waits for in-flight processor work before `Fetch.disable`. Processors are
+    /// not wired in yet, so it returns immediately.
+    async fn wait_processor_idle(_protocol: &ProtocolSession) {}
+
     async fn change_fetch(
         protocol: &ProtocolSession,
         wants_fetch: bool,
@@ -416,6 +578,9 @@ async fn reconcile_loop(
             .map(|entry| entry.patterns.clone())
             .unwrap_or_default();
         if !wants_fetch {
+            // In-flight processor work must finish before interception is turned
+            // off; with no processors wired in this is a no-op.
+            wait_processor_idle(protocol).await;
             return match protocol.send_value("Fetch.disable", json!({})).await {
                 Ok(_) => (false, true),
                 Err(error) => {
@@ -424,14 +589,13 @@ async fn reconcile_loop(
                 }
             };
         }
-        if previous_fetch {
-            let _ = protocol.send_value("Fetch.disable", json!({})).await;
-        }
+        // A second `Fetch.enable` replaces the patterns of an
+        // already-enabled session without a disable in between, and leaves an
+        // in-flight paused request continuable. Disabling first would open an
+        // interception gap and, once processors read response bodies, an
+        // undefined-behaviour window.
         match protocol
-            .send_value(
-                "Fetch.enable",
-                json!({ "patterns": patterns, "handleAuthRequests": false }),
-            )
+            .send_value("Fetch.enable", fetch_enable_params(patterns))
             .await
         {
             Ok(_) => (true, true),
@@ -439,10 +603,7 @@ async fn reconcile_loop(
                 warn!(error = %error, "network fetch enable failed");
                 let rollback_ok = if previous_fetch && !previous_patterns.is_empty() {
                     protocol
-                        .send_value(
-                            "Fetch.enable",
-                            json!({ "patterns": previous_patterns, "handleAuthRequests": false }),
-                        )
+                        .send_value("Fetch.enable", fetch_enable_params(previous_patterns))
                         .await
                         .is_ok()
                 } else {
@@ -453,6 +614,10 @@ async fn reconcile_loop(
         }
     }
     let mut applied: HashMap<SessionId, Applied> = HashMap::new();
+    // Last reported confirmation set and tab list; the host is only told about
+    // changes so the GUI is not woken every tick.
+    let mut last_report: Option<ApplyReport> = None;
+    let mut last_tabs: Option<Vec<TabSummary>> = None;
     // PageManager session per target, used to hand over to an auto-attached
     // session without leaving two Network domains capturing the same request.
     let mut page_sessions: HashMap<String, SessionId> = HashMap::new();
@@ -466,6 +631,21 @@ async fn reconcile_loop(
 
         let capture = shared.capture.load(Ordering::Relaxed);
         let rules = shared.rules();
+        // A newer snapshot arrived after this tick read `shared.rules()`; report
+        // this one as ignored and let the next tick apply the newer generation.
+        let stale_snapshot = rules.generation != shared.rules().generation;
+        if stale_snapshot {
+            let report = ApplyReport {
+                generation: rules.generation,
+                stale: true,
+                ..ApplyReport::default()
+            };
+            if last_report.as_ref() != Some(&report) {
+                last_report = Some(report);
+                let _ = events.send(RuntimeEvent::Applied(report));
+            }
+            continue;
+        }
         let needs_capture = capture;
         let needs_rules = !rules.is_empty();
         // A session that still has Fetch enabled must be reconciled even after
@@ -562,11 +742,7 @@ async fn reconcile_loop(
             let mut capture_ok = previous.is_some_and(|entry| entry.capture_ok);
             if !same_capture {
                 let params = if capture {
-                    json!({
-                        "maxTotalBufferSize": 64 * 1024 * 1024,
-                        "maxResourceBufferSize": 8 * 1024 * 1024,
-                        "maxPostDataSize": MAX_POST_DATA_BYTES,
-                    })
+                    network_enable_params()
                 } else {
                     json!({})
                 };
@@ -584,6 +760,9 @@ async fn reconcile_loop(
                 }
             }
             let (fetch_ok, rules_ok) = if !same_rules || !same_capture {
+                if !wants_fetch {
+                    shared.wait_processor_idle(&session_id).await;
+                }
                 change_fetch(&view.protocol, wants_fetch, rules.patterns(), previous).await
             } else {
                 (previous.is_some_and(|entry| entry.fetch_ok), same_rules)
@@ -641,11 +820,7 @@ async fn reconcile_loop(
                     "Network.disable"
                 };
                 let params = if capture {
-                    json!({
-                        "maxTotalBufferSize": 64 * 1024 * 1024,
-                        "maxResourceBufferSize": 8 * 1024 * 1024,
-                        "maxPostDataSize": MAX_POST_DATA_BYTES,
-                    })
+                    network_enable_params()
                 } else {
                     json!({})
                 };
@@ -658,6 +833,9 @@ async fn reconcile_loop(
                 }
             }
             let (fetch_ok, rules_ok) = if !same_rules || !same_capture {
+                if !wants_fetch {
+                    shared.wait_processor_idle(&child).await;
+                }
                 change_fetch(&protocol, wants_fetch, rules.patterns(), previous).await
             } else {
                 (previous.is_some_and(|entry| entry.fetch_ok), same_rules)
@@ -684,11 +862,18 @@ async fn reconcile_loop(
         }
 
         let report = ApplyReport {
-            sessions: applied
+            generation: rules.generation,
+            total: live_sessions.len(),
+            // An ack means "this session applied this generation". `fetch_ok`
+            // is reported separately: disabling the last rule turns Fetch off,
+            // and that must still confirm the narrowing.
+            acked: applied
                 .values()
-                .filter(|entry| entry.fetch_ok && entry.generation == rules.generation)
+                .filter(|entry| entry.generation == rules.generation)
                 .count(),
             fetch_enabled: applied.values().filter(|entry| entry.fetch_ok).count(),
+            stale: stale_snapshot,
+            timed_out: false,
         };
         // A reconcile that started before a newer SetRules must not answer that
         // command's waiter with its stale snapshot; the next tick will.
@@ -702,7 +887,16 @@ async fn reconcile_loop(
                 let _ = waiter.send(report);
             }
         }
-        let _ = events.send(RuntimeEvent::Tabs(tabs));
+        // Only a changed confirmation set is worth a host round trip: the host
+        // uses it to move `pending` rules to `active`.
+        if last_report.as_ref() != Some(&report) {
+            last_report = Some(report);
+            let _ = events.send(RuntimeEvent::Applied(report));
+        }
+        if last_tabs.as_ref() != Some(&tabs) {
+            last_tabs = Some(tabs.clone());
+            let _ = events.send(RuntimeEvent::Tabs(tabs));
+        }
     }
 }
 
@@ -730,8 +924,6 @@ async fn run_loop(
     let mut tabs: HashMap<SessionId, SessionView> = HashMap::new();
     let mut active: HashMap<(SessionId, String), ActiveRecord> = HashMap::new();
     let body_permits = Arc::new(Semaphore::new(BODY_CONCURRENCY));
-    let mut auto_attach: Option<bool> = None;
-
     loop {
         tokio::select! {
             biased;
@@ -739,51 +931,16 @@ async fn run_loop(
             command = commands.recv() => {
                 match command {
                     Some(RuntimeCommand::SetCapture(running)) => {
-                        if AUTO_ATTACH_NEW_TABS && auto_attach != Some(running) {
-                            let root = ProtocolSession::root(session.connection());
-                            let params = if running {
-                                json!({
-                                    "autoAttach": true,
-                                    "waitForDebuggerOnStart": true,
-                                    "flatten": true,
-                                    "filter": [{ "type": "page", "exclude": false }],
-                                })
-                            } else {
-                                // CDP rejects a filter when disabling.
-                                json!({ "autoAttach": false })
-                            };
-                            debug!(params = %params, "sending network auto-attach");
-                            let result = root
-                                .send_value("Target.setAutoAttach", params)
-                                .await;
-                            debug!(running, ok = result.is_ok(), "network browser auto-attach toggled");
-                            if let Err(error) = result
-                            {
-                                // Without the page filter, auto-attach would also
-                                // pause iframes that this loop does not resume.
-                                warn!(error = %error, "browser auto-attach unavailable");
-                            }
-                            auto_attach = Some(running);
-                        }
                         shared.capture.store(running, Ordering::Relaxed);
                         let _ = config_tx.send(shared.sequence.fetch_add(1, Ordering::Relaxed) + 1);
                     }
                     Some(RuntimeCommand::SetRules { rules, ack }) => {
-                        if let Ok(mut slot) = shared.rules.write() {
-                            *slot = rules;
+                        // An older generation is acknowledged as stale and does
+                        // not touch the snapshot.
+                        if shared.apply_command_rules(rules, ack) {
+                            let _ = config_tx
+                                .send(shared.sequence.fetch_add(1, Ordering::Relaxed) + 1);
                         }
-                        // Any in-flight delay or fulfill decision belongs to the
-                        // previous rule generation: release it now.
-                        if let Ok(mut slot) = shared.release.write() {
-                            slot.cancel();
-                            *slot = CancellationToken::new();
-                        }
-                        if let Some(ack) = ack
-                            && let Ok(mut waiters) = shared.apply_waiters.lock()
-                        {
-                            waiters.push(ack);
-                        }
-                        let _ = config_tx.send(shared.sequence.fetch_add(1, Ordering::Relaxed) + 1);
                     }
                     Some(RuntimeCommand::Shutdown) | None => break,
                 }
@@ -802,65 +959,10 @@ async fn run_loop(
                             && (shared.capture.load(Ordering::Relaxed)
                                 || !shared.rules().is_empty())
                         {
-                            if !ATTACH_ON_TARGET_CREATED {
-                                let _ = config_tx
-                                    .send(shared.sequence.fetch_add(1, Ordering::Relaxed) + 1);
-                                continue;
-                            }
-                            let connection = session.connection();
-                            let target_id =
-                                params.target_info.target_id.as_str().to_string();
-                            let shared = shared.clone();
-                            tokio::spawn(async move {
-                                let root = ProtocolSession::root(connection.clone());
-                                let Ok(attached) = root
-                                    .send_value(
-                                        "Target.attachToTarget",
-                                        json!({ "targetId": target_id, "flatten": true }),
-                                    )
-                                    .await
-                                else {
-                                    return;
-                                };
-                                let Some(session_id) = attached
-                                    .get("sessionId")
-                                    .and_then(Value::as_str)
-                                    .map(|value| SessionId::from(value.to_string()))
-                                else {
-                                    return;
-                                };
-                                if let Ok(mut pages) = shared.auto_pages.lock() {
-                                    pages.insert(target_id, session_id.clone());
-                                }
-                                let protocol = ProtocolSession::for_session(
-                                    connection,
-                                    session_id,
-                                );
-                                if shared.capture.load(Ordering::Relaxed) {
-                                    let _ = protocol
-                                        .send_value(
-                                            "Network.enable",
-                                            json!({
-                                                "maxTotalBufferSize": 64 * 1024 * 1024,
-                                                "maxResourceBufferSize": 8 * 1024 * 1024,
-                                                "maxPostDataSize": MAX_POST_DATA_BYTES,
-                                            }),
-                                        )
-                                        .await;
-                                }
-                                let rules = shared.rules();
-                                if !rules.is_empty() {
-                                    let _ = protocol
-                                        .send_value(
-                                            "Fetch.enable",
-                                            json!({
-                                                "patterns": rules.patterns(),
-                                                "handleAuthRequests": false,
-                                            }),
-                                        )
-                                        .await;
-                                }
-                            });
+                            // Wake reconcile; it owns attachment so a direct
+                            // attach here cannot race the native PageManager.
+                            let _ = config_tx
+                                .send(shared.sequence.fetch_add(1, Ordering::Relaxed) + 1);
                         }
                     }
                     "Target.attachedToTarget" => {
@@ -885,11 +987,7 @@ async fn run_loop(
                                 let _ = protocol
                                     .send_value(
                                         "Network.enable",
-                                        json!({
-                                            "maxTotalBufferSize": 64 * 1024 * 1024,
-                                            "maxResourceBufferSize": 8 * 1024 * 1024,
-                                            "maxPostDataSize": MAX_POST_DATA_BYTES,
-                                        }),
+                                        network_enable_params(),
                                     )
                                     .await;
                             }
@@ -898,10 +996,7 @@ async fn run_loop(
                                 let _ = protocol
                                     .send_value(
                                         "Fetch.enable",
-                                        json!({
-                                            "patterns": rules.patterns(),
-                                            "handleAuthRequests": false,
-                                        }),
+                                        fetch_enable_params(rules.patterns()),
                                     )
                                     .await;
                             }
@@ -940,11 +1035,7 @@ async fn run_loop(
                                 let _ = protocol
                                     .send_value(
                                         "Network.enable",
-                                        json!({
-                                            "maxTotalBufferSize": 64 * 1024 * 1024,
-                                            "maxResourceBufferSize": 8 * 1024 * 1024,
-                                            "maxPostDataSize": MAX_POST_DATA_BYTES,
-                                        }),
+                                        network_enable_params(),
                                     )
                                     .await;
                             }
@@ -953,10 +1044,7 @@ async fn run_loop(
                                 let _ = protocol
                                     .send_value(
                                         "Fetch.enable",
-                                        json!({
-                                            "patterns": rules.patterns(),
-                                            "handleAuthRequests": false,
-                                        }),
+                                        fetch_enable_params(rules.patterns()),
                                     )
                                     .await;
                             }
@@ -1380,6 +1468,23 @@ fn handle_paused(
     view: &SessionView,
     event: browseros_cdp::CdpEvent,
 ) {
+    if is_response_stage(&event.params) {
+        handle_response_stage(shared, events, view, event);
+    } else {
+        handle_request_stage(shared, events, view, event);
+    }
+}
+
+fn is_response_stage(params: &serde_json::Value) -> bool {
+    params.get("responseStatusCode").is_some() || params.get("responseErrorReason").is_some()
+}
+
+fn handle_request_stage(
+    shared: &Arc<Shared>,
+    events: &mpsc::UnboundedSender<RuntimeEvent>,
+    view: &SessionView,
+    event: browseros_cdp::CdpEvent,
+) {
     let request_id = event
         .params
         .get("requestId")
@@ -1443,13 +1548,21 @@ fn handle_paused(
                 .await;
             return;
         };
-        let plan: FulfillPlan = build_fulfill(
-            &rule.response,
-            &rule.body,
-            &rule.sample_headers,
-            &url,
-            &request_headers,
-        );
+        let RuntimeAction::Static {
+            response,
+            body,
+            sample_headers,
+        } = &rule.action
+        else {
+            // Processor rules let the request through; the response stage
+            // rewrites the upstream response.
+            let _ = protocol
+                .send_value("Fetch.continueRequest", json!({ "requestId": request_id }))
+                .await;
+            return;
+        };
+        let plan: FulfillPlan =
+            build_fulfill(response, body, sample_headers, &url, &request_headers);
         let decision_ms = started.elapsed().as_millis() as u64;
         shared.record_decision(decision_ms);
         if decision_ms > 100 {
@@ -1593,6 +1706,406 @@ fn handle_paused(
     });
 }
 
+fn handle_response_stage(
+    shared: &Arc<Shared>,
+    events: &mpsc::UnboundedSender<RuntimeEvent>,
+    view: &SessionView,
+    event: browseros_cdp::CdpEvent,
+) {
+    let params = event.params;
+    let request_id = params
+        .get("requestId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let request = params.get("request").cloned().unwrap_or(Value::Null);
+    let url = request
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("GET")
+        .to_string();
+    let request_headers = headers_from_value(request.get("headers").unwrap_or(&Value::Null));
+    let post_data = request
+        .get("postData")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let resource_type = params
+        .get("resourceType")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let status = params
+        .get("responseStatusCode")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let status_text = params
+        .get("responseStatusText")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let response_headers =
+        header_pairs_from_value(params.get("responseHeaders").unwrap_or(&Value::Null));
+    let network_id = params
+        .get("networkId")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let failed = params.get("responseErrorReason").is_some();
+
+    let protocol = view.protocol.clone();
+    let events = events.clone();
+    let shared = Arc::clone(shared);
+    let session = view.session_id.clone();
+    let tab_id = view.tab_id;
+    let tab_title = Some(view.title.clone());
+
+    tokio::spawn(async move {
+        if failed {
+            continue_request(&protocol, &request_id).await;
+            return;
+        }
+        let rules = shared.rules();
+        let Some(rule) = pick_processor_rule(
+            &rules,
+            tab_id,
+            &method,
+            &url,
+            post_data.as_deref(),
+            resource_type.as_deref(),
+        ) else {
+            continue_request(&protocol, &request_id).await;
+            return;
+        };
+        if let Some(reason) = response_skip_reason(status, &method, &response_headers) {
+            continue_request(&protocol, &request_id).await;
+            let _ = events.send(processor_hit(
+                rule,
+                "processor_skipped",
+                reason,
+                &url,
+                &method,
+                tab_title,
+                network_id,
+            ));
+            return;
+        }
+
+        let _guard = shared.enter_processor(&session);
+        let body = match tokio::time::timeout(
+            Duration::from_secs(10),
+            protocol.send_value(
+                "Fetch.getResponseBody",
+                json!({ "requestId": request_id.clone() }),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(value)) => decode_get_response_body(&value),
+            Ok(Err(error)) => {
+                continue_request(&protocol, &request_id).await;
+                let _ = events.send(processor_hit(
+                    rule,
+                    "processor_skipped",
+                    "body_unavailable",
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+                debug!(error = %error, "processor body read failed");
+                return;
+            }
+            Err(_) => {
+                continue_request(&protocol, &request_id).await;
+                let _ = events.send(processor_hit(
+                    rule,
+                    "processor_skipped",
+                    "body_timeout",
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+                return;
+            }
+        };
+        if body.len() as u64 > MAX_BODY_BYTES {
+            continue_request(&protocol, &request_id).await;
+            let _ = events.send(processor_hit(
+                rule,
+                "processor_skipped",
+                "body_too_large",
+                &url,
+                &method,
+                tab_title,
+                network_id,
+            ));
+            return;
+        }
+
+        let RuntimeAction::Processor { spec } = &rule.action else {
+            continue_request(&protocol, &request_id).await;
+            return;
+        };
+        let hook_protocol = protocol.clone();
+        let hook_request = request_id.clone();
+        let hooks = ProcessorHooks {
+            upstream_cookies: Box::new(move || upstream_cookies(&hook_protocol, &hook_request)),
+        };
+        let input = ProcessorInput {
+            method: method.clone(),
+            url: url.clone(),
+            request_headers,
+            request_body: post_data,
+            status,
+            status_text,
+            response_headers: response_headers.clone(),
+            body: body.clone(),
+            cookies_json: "[]".to_string(),
+        };
+        let started = Instant::now();
+        let outcome = shared.processor.run(spec, input, hooks).await;
+        shared.record_processor(started.elapsed().as_millis() as u64);
+
+        let release = shared.release();
+        if release.is_cancelled() {
+            continue_request(&protocol, &request_id).await;
+            let _ = events.send(processor_hit(
+                rule,
+                "processor_skipped",
+                "rule_changed",
+                &url,
+                &method,
+                tab_title,
+                network_id,
+            ));
+            return;
+        }
+
+        let plan = match outcome {
+            Ok(run) => match run.result {
+                ProcessorResult::Passthrough => {
+                    continue_request(&protocol, &request_id).await;
+                    let _ = events.send(processor_hit(
+                        rule,
+                        "passthrough",
+                        "",
+                        &url,
+                        &method,
+                        tab_title,
+                        network_id,
+                    ));
+                    return;
+                }
+                ProcessorResult::Replace { .. } => {
+                    build_processed(status, &response_headers, &body, &run.result)
+                }
+            },
+            Err(error) => {
+                continue_request(&protocol, &request_id).await;
+                let (outcome_label, reason) = match error.kind {
+                    ProcessorErrorKind::Timeout => ("processor_timeout", error.message),
+                    ProcessorErrorKind::Busy => ("processor_skipped", "busy".to_string()),
+                    _ => ("processor_error", error.message),
+                };
+                let _ = events.send(processor_hit(
+                    rule,
+                    outcome_label,
+                    &short_reason(&reason),
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+                return;
+            }
+        };
+
+        let params = plan.to_params(&request_id);
+        match tokio::time::timeout(
+            Duration::from_secs(1),
+            protocol.send_value("Fetch.fulfillRequest", params),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                let _ = events.send(processor_hit(
+                    rule,
+                    "processed",
+                    "",
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+            }
+            Ok(Err(error)) => {
+                continue_request(&protocol, &request_id).await;
+                let _ = events.send(processor_hit(
+                    rule,
+                    "failed",
+                    &short_reason(&error.to_string()),
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+            }
+            Err(_) => {
+                continue_request(&protocol, &request_id).await;
+                let _ = events.send(processor_hit(
+                    rule,
+                    "unknown",
+                    "send_timeout",
+                    &url,
+                    &method,
+                    tab_title,
+                    network_id,
+                ));
+            }
+        }
+    });
+}
+
+async fn continue_request(protocol: &ProtocolSession, request_id: &str) {
+    let _ = tokio::time::timeout(
+        Duration::from_secs(1),
+        protocol.send_value("Fetch.continueRequest", json!({ "requestId": request_id })),
+    )
+    .await;
+}
+
+/// Every failure path releases the paused response exactly once.
+fn processor_hit(
+    rule: &RuntimeRule,
+    outcome: &str,
+    reason: &str,
+    url: &str,
+    method: &str,
+    tab_title: Option<String>,
+    network_id: Option<String>,
+) -> RuntimeEvent {
+    RuntimeEvent::Hit(HitRecord {
+        rule_id: rule.id.clone(),
+        revision: rule.revision,
+        at_ms: now_ms(),
+        tab_title,
+        url: url.to_string(),
+        method: method.to_string(),
+        outcome: outcome.to_string(),
+        reason: (!reason.is_empty()).then(|| reason.to_string()),
+        network_id,
+    })
+}
+
+struct ProcessorGuard {
+    shared: Arc<Shared>,
+    session: SessionId,
+}
+
+impl Drop for ProcessorGuard {
+    fn drop(&mut self) {
+        self.shared.leave_processor(&self.session);
+    }
+}
+
+fn percentile_lock(times: &StdMutex<VecDeque<u64>>) -> u64 {
+    let mut values = times
+        .lock()
+        .map(|times| times.iter().copied().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if values.is_empty() {
+        return 0;
+    }
+    values.sort_unstable();
+    let index = ((values.len() as f64 * 0.95).ceil() as usize)
+        .saturating_sub(1)
+        .min(values.len() - 1);
+    values[index]
+}
+
+fn decode_get_response_body(value: &Value) -> Vec<u8> {
+    let body = value
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if value
+        .get("base64Encoded")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        super::response::base64_decode(body).unwrap_or_default()
+    } else {
+        body.as_bytes().to_vec()
+    }
+}
+
+/// Reads the upstream cookies for this request. The sandbox calls this through
+/// `response.cookies()`, so it stays lazy.
+fn upstream_cookies(protocol: &ProtocolSession, request_id: &str) -> Result<String, String> {
+    let handle = tokio::runtime::Handle::try_current().map_err(|error| error.to_string())?;
+    let response = handle
+        .block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                protocol.send_value("Fetch.getCookies", json!({ "requestId": request_id })),
+            )
+            .await
+        })
+        .map_err(|_| "cookie read timed out".to_string())?
+        .map_err(|error| error.to_string())?;
+    let cookies = response
+        .get("cookies")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    serde_json::to_string(&cookies).map_err(|error| error.to_string())
+}
+
+/// The responses a processor never sees (design §4.4).
+fn response_skip_reason(status: i64, method: &str, headers: &[HeaderPair]) -> Option<&'static str> {
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case(name))
+            .map(|header| header.value.as_str())
+    };
+    if matches!(status, 301 | 302 | 303 | 307 | 308) && header("location").is_some() {
+        return Some("redirect");
+    }
+    if method.eq_ignore_ascii_case("HEAD") || matches!(status, 204 | 304) {
+        return Some("no_body");
+    }
+    if let Some(content_type) = header("content-type") {
+        let content_type = content_type.to_ascii_lowercase();
+        if content_type.starts_with("text/event-stream")
+            || content_type.starts_with("multipart/x-mixed-replace")
+        {
+            return Some("streaming");
+        }
+    }
+    if let Some(length) = header("content-length").and_then(|value| value.parse::<u64>().ok())
+        && length > MAX_BODY_BYTES
+    {
+        return Some("body_too_large");
+    }
+    None
+}
+
+fn pick_processor_rule<'a>(
+    rules: &'a RuntimeRuleSet,
+    tab_id: i64,
+    method: &str,
+    url: &str,
+    post_data: Option<&str>,
+    resource_type: Option<&str>,
+) -> Option<&'a RuntimeRule> {
+    pick_rule(rules, tab_id, method, url, post_data, resource_type)
+        .filter(|rule| matches!(rule.action, RuntimeAction::Processor { .. }))
+}
+
 fn pick_rule<'a>(
     rules: &'a RuntimeRuleSet,
     tab_id: i64,
@@ -1631,6 +2144,7 @@ fn now_ms() -> i64 {
 mod tests {
     #![allow(clippy::expect_used)]
     use super::*;
+    use crate::network::HeaderPatch;
     use crate::network::matcher::QueryMode;
 
     fn rule(id: &str, matcher: EndpointMatcher) -> RuntimeRule {
@@ -1639,9 +2153,11 @@ mod tests {
             revision: 1,
             scope_tab: None,
             matcher,
-            response: MockResponse::default(),
-            body: Vec::new(),
-            sample_headers: Vec::new(),
+            action: RuntimeAction::Static {
+                response: StaticResponse::new(200, HeaderPatch::new(), 0, 0),
+                body: Arc::from(Vec::new()),
+                sample_headers: Arc::from(Vec::new()),
+            },
             updated_at: 0,
         }
     }
@@ -1658,6 +2174,52 @@ mod tests {
         assert_eq!(
             set.patterns()[0]["urlPattern"],
             Value::String("https://example.test/api/items*".to_string())
+        );
+    }
+
+    #[test]
+    fn patterns_use_response_stage_for_processor_rules() {
+        let matcher = EndpointMatcher::from_url("GET", "https://example.test/api/items");
+        let mut processor = rule("r2", matcher.clone());
+        processor.action = RuntimeAction::Processor {
+            spec: Arc::new(ProcessorSpec {
+                script: "function process() {}".to_string(),
+                timeout_ms: 200,
+            }),
+        };
+        let set = RuntimeRuleSet {
+            generation: 1,
+            rules: vec![rule("r1", matcher), processor],
+        };
+        let patterns = set.patterns();
+        assert_eq!(patterns[0]["requestStage"], "Request");
+        assert_eq!(patterns[1]["requestStage"], "Response");
+    }
+
+    #[test]
+    fn response_skip_rules_table() {
+        let header = |name: &str, value: &str| HeaderPair::new(name.to_string(), value.to_string());
+        assert_eq!(
+            response_skip_reason(302, "GET", &[header("location", "/next")]),
+            Some("redirect")
+        );
+        assert_eq!(response_skip_reason(200, "HEAD", &[]), Some("no_body"));
+        assert_eq!(response_skip_reason(304, "GET", &[]), Some("no_body"));
+        assert_eq!(
+            response_skip_reason(
+                200,
+                "GET",
+                &[header("content-type", "text/event-stream; charset=utf-8")]
+            ),
+            Some("streaming")
+        );
+        assert_eq!(
+            response_skip_reason(200, "GET", &[header("content-length", "3000000")]),
+            Some("body_too_large")
+        );
+        assert_eq!(
+            response_skip_reason(200, "GET", &[header("content-type", "application/json")]),
+            None
         );
     }
 
@@ -1744,5 +2306,39 @@ mod tests {
         )
         .expect("a winner");
         assert_eq!(winner.id, "strict");
+    }
+
+    #[test]
+    fn runtime_rejects_older_generation() {
+        let shared = Shared::default();
+        assert!(shared.apply_command_rules(
+            Arc::new(RuntimeRuleSet {
+                generation: 5,
+                rules: Vec::new(),
+            }),
+            None,
+        ));
+
+        let (ack, mut receiver) = oneshot::channel();
+        let accepted = shared.apply_command_rules(
+            Arc::new(RuntimeRuleSet {
+                generation: 4,
+                rules: Vec::new(),
+            }),
+            Some(ack),
+        );
+        assert!(!accepted, "an older generation must not replace g5");
+        let report = receiver.try_recv().expect("the stale ack is immediate");
+        assert!(report.stale);
+        assert_eq!(report.generation, 4);
+        assert_eq!(
+            shared.rules().generation,
+            5,
+            "the snapshot stays at the newest generation"
+        );
+        assert!(
+            !shared.release().is_cancelled(),
+            "a rejected snapshot must not release in-flight decisions"
+        );
     }
 }

@@ -1,0 +1,34 @@
+{
+  "browser": {
+    "connected": true
+  },
+  "capture": {
+    "running": true,
+    "startedAtMs": 1760000000000,
+    "records": 412,
+    "dropped": 0,
+    "bodyBytes": 4194304,
+    "gapEvents": 0,
+    "tabs": [
+      {
+        "tabId": 49351,
+        "title": "Shop",
+        "url": "https://shop.example.test/",
+        "windowId": 1,
+        "active": true,
+        "lastActiveAtMs": 1760000000999
+      }
+    ]
+  },
+  "rules": {
+    "active": 2,
+    "total": 5
+  },
+  "runtime": {
+    "paused": 0,
+    "decisionP95Ms": 4,
+    "rulesGeneration": 9,
+    "processorP95Ms": 12,
+    "processorInflight": 0
+  }
+}

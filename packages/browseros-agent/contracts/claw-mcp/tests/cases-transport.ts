@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
   'mark_skill_run',
   'name_session',
   'navigate',
+  'network',
   'pdf',
   'read',
   'request_human_help',

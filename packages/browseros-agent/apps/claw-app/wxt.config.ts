@@ -9,7 +9,9 @@ import { defineConfig } from 'wxt'
 // `browserOS` is BrowserOS Chromium's permission gate for the
 // new-tab override and the cockpit-adjacent surfaces.
 export default defineConfig({
-  outDir: 'dist',
+  // NEOB_EXT_OUT_DIR lets verification builds avoid the dist/ that the
+  // user's NeoB loads; release builds keep the default.
+  outDir: process.env.NEOB_EXT_OUT_DIR || 'dist',
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'NEOB',

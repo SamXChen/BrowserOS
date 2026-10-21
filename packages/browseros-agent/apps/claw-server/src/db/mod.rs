@@ -37,6 +37,12 @@ use std::{
 
 pub const DATABASE_FILENAME: &str = "browserclaw.sqlite";
 
+/// Opaque handle to the pooled connection.
+///
+/// Other layers receive it through a closure (`NetworkRepository::stmt`) so the
+/// `sea_orm` connection type stays inside `src/db`.
+pub type DbConnection = sea_orm::DatabaseConnection;
+
 /// How the on-disk schema relates to this binary's known migrations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationOutcome {
@@ -69,7 +75,9 @@ impl Database {
         })
     }
 
-    pub(in crate::db) fn connection(&self) -> &DatabaseConnection {
+    /// Shared connection for single statements. Rule writes that must be
+    /// atomic take a transaction instead.
+    pub(crate) fn connection(&self) -> &DatabaseConnection {
         &self.connection
     }
 
@@ -290,6 +298,7 @@ fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
     use super::{
         AuditLog, DATABASE_FILENAME, Database, MigrationOutcome, SQLITE_CORRUPT, SQLITE_NOTADB,
         append_suffix, audit_log::ListDispatchesQuery, back_up_database, connect_and_migrate,
@@ -450,7 +459,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 21);
+        assert_eq!(migrations.len(), 22);
         assert_eq!(
             migrations[0].try_get::<String>("", "version")?,
             "m0001_baseline"
@@ -531,6 +540,119 @@ mod tests {
             migrations[19].try_get::<String>("", "version")?,
             "m0020_add_feedback_invite_snooze"
         );
+        assert_eq!(
+            migrations[20].try_get::<String>("", "version")?,
+            "m0021_network_rules"
+        );
+        assert_eq!(
+            migrations[21].try_get::<String>("", "version")?,
+            "m0022_network_rules_v2"
+        );
+        Ok(())
+    }
+
+    struct MigratorThrough21;
+
+    #[async_trait::async_trait]
+    impl MigratorTrait for MigratorThrough21 {
+        fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+            Migrator::migrations().into_iter().take(21).collect()
+        }
+    }
+
+    struct MigratorThrough22;
+
+    #[async_trait::async_trait]
+    impl MigratorTrait for MigratorThrough22 {
+        fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+            Migrator::migrations().into_iter().take(22).collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn migration_m0022_recreates_network_tables() -> anyhow::Result<()> {
+        let directory = tempdir()?;
+        let path = directory.path().join(DATABASE_FILENAME);
+
+        let (before, _) = open_and_migrate::<MigratorThrough21>(&path).await?;
+        before
+            .execute_unprepared(
+                "INSERT INTO net_rules (id, scope_kind, enabled, state, current_revision, generation, created_at, updated_at) \
+                 VALUES ('rule_old', 'all_tabs', 1, 'active', 1, 0, 1, 1)",
+            )
+            .await?;
+        before.close().await?;
+
+        let (database, _) = open_and_migrate::<MigratorThrough22>(&path).await?;
+
+        let tables: Vec<String> = database
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'net_%' ORDER BY name".to_string(),
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "name"))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(
+            tables,
+            vec![
+                "net_handoffs",
+                "net_rule_hits",
+                "net_rule_revisions",
+                "net_rules"
+            ]
+        );
+
+        let rules = database
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM net_rules".to_string(),
+            ))
+            .await?
+            .expect("count query returns a row");
+        assert_eq!(
+            rules.try_get::<i64>("", "count")?,
+            0,
+            "m0022 drops earlier network rows"
+        );
+
+        let columns: Vec<String> = database
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name FROM pragma_table_info('net_rules') ORDER BY name".to_string(),
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "name"))
+            .collect::<Result<_, _>>()?;
+        assert!(columns.contains(&"name".to_string()));
+        assert!(!columns.contains(&"generation".to_string()));
+
+        let indexes: Vec<String> = database
+            .query_all(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'net_%' ORDER BY name".to_string(),
+            ))
+            .await?
+            .into_iter()
+            .map(|row| row.try_get::<String>("", "name"))
+            .collect::<Result<_, _>>()?;
+        assert!(indexes.contains(&"net_rules_name_uidx".to_string()));
+
+        let version = database
+            .query_one(Statement::from_string(
+                DbBackend::Sqlite,
+                "SELECT version FROM seaql_migrations ORDER BY version DESC LIMIT 1".to_string(),
+            ))
+            .await?
+            .expect("migration row");
+        assert_eq!(
+            version.try_get::<String>("", "version")?,
+            "m0022_network_rules_v2"
+        );
+
+        database.close().await?;
         Ok(())
     }
 
@@ -668,7 +790,7 @@ mod tests {
         let migration_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM seaql_migrations")
             .fetch_one(&mut conn)
             .await?;
-        assert_eq!(migration_count, 21);
+        assert_eq!(migration_count, 22);
         conn.close().await?;
         Ok(())
     }
@@ -777,7 +899,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations ORDER BY version".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 21);
+        assert_eq!(migrations.len(), 22);
         assert_eq!(
             migrations
                 .iter()
@@ -800,7 +922,7 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("migration count missing"))?
             .try_get::<i64>("", "count")?;
-        assert_eq!(migration_count, 21);
+        assert_eq!(migration_count, 22);
         Ok(())
     }
 
@@ -936,7 +1058,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 21);
+        assert_eq!(migrations.len(), 22);
         Ok(())
     }
 

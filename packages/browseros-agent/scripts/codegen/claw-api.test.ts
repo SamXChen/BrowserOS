@@ -6,6 +6,7 @@ import {
   emitRustModuleIndex,
   emitTypeScriptModelIndex,
   extractModelGroups,
+  generatorPaths,
   mergeRustModels,
   mergeTypeScriptModels,
 } from './claw-api'
@@ -265,7 +266,9 @@ describe('TypeScript Claw API client generation boundary', () => {
     expect(source).toMatch(/export interface paths \{/)
     expect(source).toMatch(/export interface operations \{/)
     expect(source).toMatch(/export interface components \{/)
-    expect(source).not.toMatch(/\b(?:DefaultApi|Configuration|runtime)\b/)
+    // `runtime` alone would match the legit NetworkRuntimeState property.
+    expect(source).not.toMatch(/\b(?:DefaultApi|Configuration)\b/)
+    expect(source).not.toMatch(/\bruntime::|from '\.\/runtime/)
   })
 })
 
@@ -516,6 +519,25 @@ export const Alpha = { Value: 'value' } as const;
 
 export const Alpha = { Value: 'value' } as const;
 `)
+  })
+})
+
+describe('generatorPaths', () => {
+  test('maps to host paths only in jar mode', () => {
+    const jarMode = generatorPaths('/tmp/out-xyz', '/tmp/generator.jar')
+    expect(jarMode.spec).toBe(contractPath)
+    expect(jarMode.templates).toContain(
+      '/scripts/codegen/templates/claw-api/typescript-fetch',
+    )
+    expect(jarMode.templates.startsWith('/')).toBe(true)
+    expect(jarMode.out).toBe('/tmp/out-xyz')
+
+    const dockerMode = generatorPaths('/tmp/out-xyz', undefined)
+    expect(dockerMode.spec).toBe('/local/contracts/claw-api/openapi.yaml')
+    expect(dockerMode.templates).toBe(
+      '/local/scripts/codegen/templates/claw-api/typescript-fetch',
+    )
+    expect(dockerMode.out).toBe('/out')
   })
 })
 

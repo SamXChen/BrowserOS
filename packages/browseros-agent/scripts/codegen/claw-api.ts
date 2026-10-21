@@ -14,6 +14,8 @@
  * That determinism is what lets `--check` (`bun run
  * codegen:claw-api:check`, the CI drift gate) compare a fresh
  * generation against the committed trees byte for byte.
+ * Without Docker, set `OPENAPI_GENERATOR_JAR` to the same-version
+ * jar; the output must be byte-identical.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -31,7 +33,10 @@ import { join, relative } from 'node:path'
 import { parse } from 'yaml'
 
 const root = join(import.meta.dir, '../..')
-const image = 'openapitools/openapi-generator-cli:v7.22.0'
+const generatorVersion = '7.22.0'
+const image = `openapitools/openapi-generator-cli:v${generatorVersion}`
+// Local runs without Docker point this at the same-version jar from Maven Central.
+const generatorJar = process.env.OPENAPI_GENERATOR_JAR
 const check = process.argv.includes('--check')
 
 interface GeneratedTrees {
@@ -369,11 +374,63 @@ function formatTypeScriptImport(
   return `${keyword} {\n${specifiers.map((specifier) => `    ${specifier},`).join('\n')}\n} from '${target}';`
 }
 
-function runGenerator(outputRoot: string): GeneratedTrees {
+export interface GeneratorPaths {
+  spec: string
+  templates: string
+  out: string
+}
+
+export function generatorPaths(
+  outputRoot: string,
+  jar: string | undefined,
+): GeneratorPaths {
+  return jar
+    ? {
+        spec: join(root, 'contracts/claw-api/openapi.yaml'),
+        templates: join(
+          root,
+          'scripts/codegen/templates/claw-api/typescript-fetch',
+        ),
+        out: outputRoot,
+      }
+    : {
+        spec: '/local/contracts/claw-api/openapi.yaml',
+        templates: '/local/scripts/codegen/templates/claw-api/typescript-fetch',
+        out: '/out',
+      }
+}
+
+function assertGeneratorJarVersion(): void {
+  if (!generatorJar) return
+  const result = spawnSync('java', ['-jar', generatorJar, 'version'], {
+    encoding: 'utf8',
+  })
+  if (result.error) throw result.error
+  const version = result.stdout.trim()
+  if (version !== generatorVersion) {
+    throw new Error(
+      `OPENAPI_GENERATOR_JAR is ${version}, expected ${generatorVersion}`,
+    )
+  }
+}
+
+function runOpenApiGenerator(outputRoot: string, args: string[]): void {
+  if (generatorJar) {
+    const result = spawnSync(
+      'java',
+      ['-jar', generatorJar, 'generate', ...args],
+      { stdio: 'inherit' },
+    )
+    if (result.error) throw result.error
+    if (result.status !== 0) {
+      throw new Error(`OpenAPI Generator exited with status ${result.status}`)
+    }
+    return
+  }
   // Run the container as the invoking user so the generated files on
   // the bind mount aren't root-owned on Linux hosts.
   const mount = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`
-  const common = [
+  runDocker([
     'run',
     '--rm',
     '--user',
@@ -384,29 +441,35 @@ function runGenerator(outputRoot: string): GeneratedTrees {
     `${outputRoot}:/out`,
     image,
     'generate',
-    '-i',
-    '/local/contracts/claw-api/openapi.yaml',
-  ]
+    ...args,
+  ])
+}
 
-  runDocker([
-    ...common,
+function runGenerator(outputRoot: string): GeneratedTrees {
+  assertGeneratorJarVersion()
+  const paths = generatorPaths(outputRoot, generatorJar)
+
+  runOpenApiGenerator(outputRoot, [
+    '-i',
+    paths.spec,
     '-g',
     'typescript-fetch',
     '-t',
-    '/local/scripts/codegen/templates/claw-api/typescript-fetch',
+    paths.templates,
     '-o',
-    '/out/typescript',
+    join(paths.out, 'typescript'),
     '--global-property',
     'models,modelDocs=false,modelTests=false',
     '--additional-properties',
     'supportsES6=true,typescriptThreePlus=true,importFileExtension=.js,disallowAdditionalPropertiesIfNotPresent=false',
   ])
-  runDocker([
-    ...common,
+  runOpenApiGenerator(outputRoot, [
+    '-i',
+    paths.spec,
     '-g',
     'rust',
     '-o',
-    '/out/rust',
+    join(paths.out, 'rust'),
     '--global-property',
     'models,supportingFiles,modelDocs=false,modelTests=false,apis=false,apiDocs=false,apiTests=false',
     '--additional-properties',
@@ -435,6 +498,18 @@ function runGenerator(outputRoot: string): GeneratedTrees {
     writeFileSync(path, normalized)
   }
   writeFileSync(join(typescript, 'index.ts'), emitTypeScriptModelIndex(groups))
+  // Generated models name `serde_json::Value` for free-form schema values.
+  // `src/lib.rs` re-exports the crate, so rewrite the path to `crate::`.
+  for (const file of listFiles(rust).filter((path) => path.endsWith('.rs'))) {
+    const path = join(rust, file)
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replaceAll(
+        'serde_json::Value',
+        'crate::serde_json::Value',
+      ),
+    )
+  }
   mkdirSync(client, { recursive: true })
   const clientOutput = join(client, 'openapi.ts')
   runOpenApiTypescript(clientOutput)

@@ -1,0 +1,70 @@
+{
+  "rule": {
+    "id": "rule_01H8XQ4M7K9P2N3R4T5V6W7Y8Z",
+    "name": "商品列表-空数据",
+    "scope": "all_tabs",
+    "scopeTab": null,
+    "enabled": true,
+    "state": "pending",
+    "stateReason": "no_tab",
+    "action": "static",
+    "authorClient": "claude-code",
+    "currentRevision": 3,
+    "hitCount": 0,
+    "method": "GET",
+    "pathname": "/api/items",
+    "origin": "https://shop.example.test",
+    "exactUrl": null,
+    "ignoreKeys": ["nonce"],
+    "strictQuery": false,
+    "bodyFieldCount": 0,
+    "responseStatus": 200,
+    "lastHit": null,
+    "createdAt": 1760000000000,
+    "updatedAt": 1760000000456
+  },
+  "revision": {
+    "revision": 3,
+    "createdAt": 1760000000456,
+    "matcher": {
+      "method": "GET",
+      "origin": "https://shop.example.test",
+      "pathname": "/api/items",
+      "exactUrl": null,
+      "sampleQuery": [["page", "1"], ["nonce", "abc"]],
+      "queryPolicy": {
+        "mode": "lenient",
+        "ignoreKeys": ["nonce"]
+      },
+      "bodyFields": [],
+      "resourceType": "XHR",
+      "matcherVersion": 1
+    },
+    "action": {
+      "kind": "static",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json",
+        "set-cookie": ["neob_a=1; Path=/", "neob_b=1; Path=/; HttpOnly"],
+        "x-debug": null
+      },
+      "delayMs": 0,
+      "body": {
+        "bytes": 1234,
+        "encoding": "utf8",
+        "preview": "{\"items\":[]}"
+      }
+    },
+    "source": {
+      "handoffId": "netref_01H8XQ4M7K9P2N3R4T5V6W7Y80",
+      "recordId": "netrec_01H8XQ4M7K9P2N3R4T5V6W7Y81",
+      "tabId": 49351
+    }
+  },
+  "hits": [],
+  "sample": {
+    "available": true,
+    "status": 200,
+    "bytes": 5678
+  }
+}

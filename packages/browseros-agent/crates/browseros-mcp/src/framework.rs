@@ -176,6 +176,17 @@ pub trait NetworkHost: Send + Sync {
 
     fn rule_apply<'a>(&'a self, args: Value) -> BoxFuture<'a, Result<Value, String>>;
 
+    /// Lists rules, optionally filtered by a name/id substring.
+    fn rule_list<'a>(&'a self, query: Option<&'a str>) -> BoxFuture<'a, Result<Value, String>>;
+
+    /// Reads one rule's full definition, plus a window of its body.
+    fn rule_get<'a>(
+        &'a self,
+        rule: &'a str,
+        body_offset: u64,
+        body_limit: u64,
+    ) -> BoxFuture<'a, Result<Value, String>>;
+
     fn rule_status<'a>(
         &'a self,
         rule_id: Option<&'a str>,

@@ -193,6 +193,355 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/api/v1/network/state': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Browser connection, capture state and rule counts. */
+    get: operations['getNetworkState']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/captures': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Start capturing every ordinary tab. Idempotent while running. */
+    post: operations['startNetworkCapture']
+    /** Stop capture and discard the temporary record buffer. */
+    delete: operations['stopNetworkCapture']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/records': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Records in ascending sequence order. */
+    get: operations['listNetworkRecords']
+    put?: never
+    post?: never
+    /** Clear the buffer without stopping capture. */
+    delete: operations['deleteNetworkRecords']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/records/restore': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Undo a record deletion inside the eight-second window. */
+    post: operations['restoreNetworkRecord']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/records/{recordId}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** One record's metadata and headers. */
+    get: operations['getNetworkRecord']
+    put?: never
+    post?: never
+    /** Delete one record; the response carries an undo token. */
+    delete: operations['deleteNetworkRecord']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/records/{recordId}/request-body': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Request postData, paginated by byte offset. */
+    get: operations['getNetworkRequestBody']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/records/{recordId}/response-body': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Response body, paginated by byte offset. */
+    get: operations['getNetworkResponseBody']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/handoffs': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Handoff snapshots, newest first. */
+    get: operations['listNetworkHandoffs']
+    put?: never
+    /** Freeze one record into a durable handoff and return the clipboard text. */
+    post: operations['createNetworkHandoff']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/handoffs/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Handoff snapshot without the body bytes. */
+    get: operations['getNetworkHandoff']
+    put?: never
+    post?: never
+    /** Delete a handoff and release its pinned body. */
+    delete: operations['deleteNetworkHandoff']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Mock rules with state, scope and last hit. */
+    get: operations['listNetworkRules']
+    put?: never
+    post?: never
+    /** Soft-delete every rule; each one can be undone for eight seconds. */
+    delete: operations['deleteAllNetworkRules']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Rule detail with its current revision and recent hits. */
+    get: operations['getNetworkRule']
+    put?: never
+    post?: never
+    /** Soft-delete one rule; undo within eight seconds. */
+    delete: operations['deleteNetworkRule']
+    options?: never
+    head?: never
+    /** Enable or disable, change the scope, or rename one rule. */
+    patch: operations['patchNetworkRule']
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}/restore': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Undo a rule deletion. */
+    post: operations['restoreNetworkRule']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}/test': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Run the stored matcher against the current capture buffer. */
+    post: operations['testNetworkRule']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}/processor-test': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Run the rule's processor script against its sample body. */
+    post: operations['testNetworkProcessor']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}/revisions': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Immutable rule revisions. */
+    get: operations['listNetworkRuleRevisions']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/rules/{id}/revisions/{revision}/restore': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Create a new revision from an older one. */
+    post: operations['restoreNetworkRuleRevision']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/tabs/{tabId}/reload': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Reload a captured tab, optionally bypassing the cache. */
+    post: operations['reloadNetworkTab']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/stop-all': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Disable every rule and narrow Fetch without deleting definitions. */
+    post: operations['stopAllNetworkMocks']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/hits': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Recent rule hits. */
+    get: operations['listNetworkHits']
+    put?: never
+    post?: never
+    /** Clear the hit history for one rule. */
+    delete: operations['deleteNetworkHits']
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
+  '/api/v1/network/events': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    /** Server-sent capture, rule, hit and deletion events. */
+    get: operations['streamNetworkEvents']
+    put?: never
+    post?: never
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
   '/api/v1/sessions': {
     parameters: {
       query?: never
@@ -549,6 +898,352 @@ export interface components {
       code: string
       message: string
       requestId?: string
+    }
+    NetworkBrowserState: {
+      connected: boolean
+    }
+    NetworkRulesState: {
+      active: number
+      total: number
+    }
+    NetworkRuntimeState: {
+      paused?: number
+      decisionP95Ms?: number
+      rulesGeneration?: number
+      processorP95Ms?: number
+      processorInflight?: number
+    }
+    NetworkCaptureTab: {
+      tabId: number
+      pageId: number
+      title: string
+      url: string
+      attached: boolean
+    }
+    NetworkCaptureState: {
+      running: boolean
+      /** @enum {string} */
+      state?: 'running' | 'paused' | 'stopped'
+      startedAt?: number
+      records: number
+      gapEvents: number
+      bodyBytes?: number
+      tabs?: components['schemas']['NetworkCaptureTab'][]
+    }
+    NetworkStatus: {
+      browser: components['schemas']['NetworkBrowserState']
+      capture: components['schemas']['NetworkCaptureState']
+      rules: components['schemas']['NetworkRulesState']
+      runtime?: components['schemas']['NetworkRuntimeState']
+    }
+    NetworkHeaderPair: {
+      name: string
+      value: string
+    }
+    NetworkHandoffSource: {
+      recordId: string
+      method: string
+      url: string
+      status?: number
+      tabId?: number
+      tabTitle?: string
+      resourceType?: string
+    }
+    NetworkHandoffView: {
+      id: string
+      createdAt: number
+      expiresAt: number
+      ruleId?: string
+      source?: components['schemas']['NetworkHandoffSource']
+      requestHeaders?: components['schemas']['NetworkHeaderList']
+      requestBody?: string
+      responseHeaders?: components['schemas']['NetworkHeaderList']
+      bodyState: string
+    }
+    NetworkQueryDiff: {
+      key: string
+      sample?: string[]
+      actual?: string[]
+    }
+    NetworkMockMark: {
+      ruleId: string
+      revision: number
+      outcome: string
+      reason?: string
+    }
+    NetworkRecord: {
+      recordId: string
+      seq: number
+      requestId: string
+      redirectOrdinal?: number
+      tabId?: number
+      tabTitle?: string
+      pageId?: number
+      frameId?: string
+      method: string
+      url: string
+      resourceType?: string
+      requestHeaders?: components['schemas']['NetworkHeaderPair'][]
+      postData?: string
+      status?: number
+      statusText?: string
+      mimeType?: string
+      responseHeaders?: components['schemas']['NetworkHeaderPair'][]
+      encodedDataLength?: number
+      startedAtMs: number
+      finishedAtMs?: number
+      fromCache?: boolean
+      fromServiceWorker?: boolean
+      state: string
+      failure?: string
+      bodyState: string
+      bodyReason?: string
+      mock?: components['schemas']['NetworkMockMark']
+    }
+    NetworkRecordList: {
+      records: components['schemas']['NetworkRecord'][]
+    }
+    NetworkBodyPage: {
+      encoding: string
+      offset: number
+      /** @description Bytes in this window; set for rule and handoff samples. */
+      length?: number
+      total: number
+      truncated: boolean
+      data: string
+      state?: string
+      mimeType?: string
+    }
+    NetworkTabReloadRequest: {
+      ignoreCache: boolean
+    }
+    NetworkHandoffRequest: {
+      recordId: string
+    }
+    NetworkHandoffCreated: {
+      handoffId: string
+      clipboardText: string
+      expiresAt: number
+      reused: boolean
+    }
+    NetworkHandoffSummary: {
+      id: string
+      createdAt: number
+      expiresAt: number
+      state: string
+      ruleId?: string
+      source?: components['schemas']['NetworkHandoffSource']
+      requestHeaders?: string
+      bodyState: string
+    }
+    NetworkHandoffList: {
+      handoffs: components['schemas']['NetworkHandoffSummary'][]
+    }
+    NetworkHandoffDetail: {
+      handoff: components['schemas']['NetworkHandoffView']
+    }
+    NetworkRule: {
+      id: string
+      name?: string
+      action?: components['schemas']['NetworkRuleAction']
+      matcher?: components['schemas']['NetworkMatcher']
+      scope: string
+      scopeTab?: number
+      enabled: boolean
+      state: string
+      stateReason?: string
+      authorClient?: string
+      currentRevision: number
+      hitCount?: number
+      responseStatus?: number
+      method?: string
+      pathname?: string
+      origin?: string
+      ignoreKeys?: string[]
+      strictQuery?: boolean
+      lastHit?: components['schemas']['NetworkHit']
+      createdAt: number
+      updatedAt: number
+    }
+    NetworkRuleDetail: {
+      rule: components['schemas']['NetworkRule']
+      revision: components['schemas']['NetworkRuleRevision']
+      hits?: components['schemas']['NetworkHit'][]
+      sample?: components['schemas']['NetworkSampleInfo']
+    }
+    NetworkMatcher: {
+      method: string
+      origin?: string
+      pathname?: string
+      exactUrl?: string
+      sampleQuery?: string[][]
+      queryPolicy: components['schemas']['NetworkQueryPolicy']
+      bodyFields: components['schemas']['NetworkMatcherBodyField'][]
+      resourceType?: string
+      matcherVersion: number
+    }
+    NetworkMatcherBodyField: {
+      pointer: string
+      equals?: string
+    }
+    NetworkQueryPolicy: {
+      /** @enum {string} */
+      mode: 'lenient' | 'strict'
+      ignoreKeys: string[]
+    }
+    NetworkRuleRevision: {
+      revision: number
+      createdAt?: number
+      matcher: components['schemas']['NetworkMatcher']
+      action: components['schemas']['NetworkRuleAction']
+      source: components['schemas']['NetworkRevisionSource']
+    }
+    NetworkRuleRevisionList: {
+      revisions: components['schemas']['NetworkRuleRevision'][]
+    }
+    NetworkRuleTestResult: {
+      matched: number
+      considered: number
+      samples: components['schemas']['NetworkTestSample'][]
+    }
+    NetworkBodyPreview: {
+      bytes?: number
+      /** @enum {string} */
+      encoding?: 'utf8' | 'binary'
+      preview?: string
+    }
+    NetworkSampleInfo: {
+      available: boolean
+      status?: number
+      bytes?: number
+    }
+    NetworkRevisionSource: {
+      handoffId?: string
+      recordId?: string
+      tabId?: number
+    }
+    NetworkTestSample: {
+      recordId: string
+      method: string
+      url: string
+      status?: number
+      tabTitle?: string
+      at?: number
+    }
+    NetworkProcessorTestResult: {
+      /** @enum {string} */
+      outcome: 'processed' | 'passthrough' | 'error' | 'timeout'
+      status?: number
+      headers?: components['schemas']['NetworkHeaderList']
+      body?: components['schemas']['NetworkBodyPreview']
+      logs?: string[]
+      elapsedMs?: number
+      error?: string
+    }
+    NetworkRuleAction: {
+      /** @enum {string} */
+      kind: 'static' | 'processor'
+      status?: number
+      /**
+       * @description Header overrides keyed by lower-cased name. Each value is a string, an
+       *     array of strings (several set-cookie lines), or null to delete every
+       *     header with that name.
+       */
+      headers?: {
+        [key: string]: unknown
+      }
+      delayMs?: number
+      script?: string
+      timeoutMs?: number
+      body?: components['schemas']['NetworkBodyPreview']
+    }
+    NetworkStaticAction: {
+      /** @enum {string} */
+      kind: 'static'
+      status: number
+      /**
+       * @description Header overrides keyed by lower-cased name. Each value is a string, an
+       *     array of strings (several set-cookie lines), or null to delete every
+       *     header with that name.
+       */
+      headers: {
+        [key: string]: unknown
+      }
+      delayMs: number
+      body: components['schemas']['NetworkBodyPreview']
+    }
+    NetworkProcessorAction: {
+      /** @enum {string} */
+      kind: 'processor'
+      script: string
+      timeoutMs: number
+    }
+    NetworkHitsDeleted: {
+      deleted: number
+    }
+    NetworkRulesDeleted: {
+      deleted: number
+    }
+    NetworkRuleList: {
+      rules: components['schemas']['NetworkRule'][]
+    }
+    /** @description Exactly one of the four groups may be present. */
+    NetworkRulePatch: {
+      enabled?: boolean
+      /** @enum {string} */
+      scope?: 'all_tabs' | 'tab'
+      tabId?: number
+      name?: string
+    }
+    NetworkRuleUpdated: {
+      rule: components['schemas']['NetworkRule']
+    }
+    NetworkNearMiss: {
+      reason: string
+      recordId?: string
+      method?: string
+      url?: string
+      tabTitle?: string
+      queryDiffs?: components['schemas']['NetworkQueryDiff'][]
+      /** @enum {string} */
+      blockedBy?: 'cors'
+    }
+    NetworkRestoreRequest: {
+      undoToken: string
+    }
+    NetworkRestoreResult: {
+      restored: boolean
+      recordId?: string
+      ruleId?: string
+      state?: string
+    }
+    NetworkDeleted: {
+      deleted: boolean
+      undoToken?: string
+      undoUntil?: number
+    }
+    NetworkRecordsCleared: {
+      deleted: number
+      all: boolean
+    }
+    NetworkStopAllResult: {
+      disabled: number
+      narrowed: boolean
+    }
+    NetworkHit: {
+      id: string
+      ruleId: string
+      revision: number
+      at: number
+      tabTitle?: string
+      url: string
+      method: string
+      outcome: string
+      reason?: string
+      networkId?: string
+    }
+    NetworkHitList: {
+      hits: components['schemas']['NetworkHit'][]
     }
     HealthResponse: {
       /**
@@ -1101,6 +1796,8 @@ export interface components {
       /** @description The catalog SKILL.md contents, shown for preview before install. */
       body: string
     }
+    NetworkHeaderList: components['schemas']['NetworkHeaderPair'][]
+    NetworkEmptyRequest: Record<string, never>
   }
   responses: {
     /** @description Invalid request input. */
@@ -1178,6 +1875,11 @@ export interface components {
     RecordingBatchId: string
     /** @description Permanently marks this document stream partial after recorder-side loss. */
     RecordingGap: boolean
+    RecordId: string
+    BodyOffset: number
+    BodyLimit: number
+    HandoffId: string
+    RuleId: string
   }
   requestBodies: never
   headers: never
@@ -1532,6 +2234,706 @@ export interface operations {
           'application/json': components['schemas']['AgentSettings']
         }
       }
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkState: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Current network state. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkStatus']
+        }
+      }
+      403: components['responses']['Forbidden']
+      500: components['responses']['InternalError']
+    }
+  }
+  startNetworkCapture: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Capture state. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkCaptureState']
+        }
+      }
+      403: components['responses']['Forbidden']
+      500: components['responses']['InternalError']
+    }
+  }
+  stopNetworkCapture: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Capture state after stopping. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkCaptureState']
+        }
+      }
+      403: components['responses']['Forbidden']
+      500: components['responses']['InternalError']
+    }
+  }
+  listNetworkRecords: {
+    parameters: {
+      query?: {
+        since?: number
+        limit?: number
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Captured records. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRecordList']
+        }
+      }
+      403: components['responses']['Forbidden']
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteNetworkRecords: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Number of removed records. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRecordsCleared']
+        }
+      }
+      403: components['responses']['Forbidden']
+      500: components['responses']['InternalError']
+    }
+  }
+  restoreNetworkRecord: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NetworkRestoreRequest']
+      }
+    }
+    responses: {
+      /** @description Restore result. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRestoreResult']
+        }
+      }
+      410: components['responses']['Gone']
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkRecord: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        recordId: components['parameters']['RecordId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description The record. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRecord']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteNetworkRecord: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        recordId: components['parameters']['RecordId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted with an eight-second undo window. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkDeleted']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkRequestBody: {
+    parameters: {
+      query?: {
+        offset?: components['parameters']['BodyOffset']
+        limit?: components['parameters']['BodyLimit']
+      }
+      header?: never
+      path: {
+        recordId: components['parameters']['RecordId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Request body page. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkBodyPage']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkResponseBody: {
+    parameters: {
+      query?: {
+        offset?: components['parameters']['BodyOffset']
+        limit?: components['parameters']['BodyLimit']
+      }
+      header?: never
+      path: {
+        recordId: components['parameters']['RecordId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Response body page. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkBodyPage']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  listNetworkHandoffs: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Handoffs. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkHandoffList']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  createNetworkHandoff: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NetworkHandoffRequest']
+      }
+    }
+    responses: {
+      /** @description Created handoff. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkHandoffCreated']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkHandoff: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['HandoffId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Handoff detail. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkHandoffDetail']
+        }
+      }
+      404: components['responses']['NotFound']
+      410: components['responses']['Gone']
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteNetworkHandoff: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['HandoffId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkDeleted']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  listNetworkRules: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Rules. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleList']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteAllNetworkRules: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Number of deleted rules. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRulesDeleted']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  getNetworkRule: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Rule detail. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleDetail']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteNetworkRule: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Deleted with an undo token. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkDeleted']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  patchNetworkRule: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NetworkRulePatch']
+      }
+    }
+    responses: {
+      /** @description Updated rule state. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleUpdated']
+        }
+      }
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
+      500: components['responses']['InternalError']
+    }
+  }
+  restoreNetworkRule: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Restore result. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRestoreResult']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  testNetworkRule: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Match summary. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleTestResult']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  testNetworkProcessor: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NetworkEmptyRequest']
+      }
+    }
+    responses: {
+      /** @description Dry-run result. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkProcessorTestResult']
+        }
+      }
+      404: components['responses']['NotFound']
+      409: components['responses']['Conflict']
+      500: components['responses']['InternalError']
+    }
+  }
+  listNetworkRuleRevisions: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Revisions. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleRevisionList']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  restoreNetworkRuleRevision: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        id: components['parameters']['RuleId']
+        revision: number
+      }
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description New revision. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkRuleUpdated']
+        }
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+    }
+  }
+  reloadNetworkTab: {
+    parameters: {
+      query?: never
+      header?: never
+      path: {
+        tabId: number
+      }
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NetworkTabReloadRequest']
+      }
+    }
+    responses: {
+      /** @description Reload requested. */
+      204: {
+        headers: {
+          [name: string]: unknown
+        }
+        content?: never
+      }
+      404: components['responses']['NotFound']
+      500: components['responses']['InternalError']
+      503: components['responses']['InternalError']
+    }
+  }
+  stopAllNetworkMocks: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Number of disabled rules. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkStopAllResult']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  listNetworkHits: {
+    parameters: {
+      query?: {
+        ruleId?: string
+        limit?: number
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Hits. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkHitList']
+        }
+      }
+      500: components['responses']['InternalError']
+    }
+  }
+  deleteNetworkHits: {
+    parameters: {
+      query: {
+        ruleId: string
+      }
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Number of deleted hits. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['NetworkHitsDeleted']
+        }
+      }
+      400: components['responses']['BadRequest']
+      500: components['responses']['InternalError']
+    }
+  }
+  streamNetworkEvents: {
+    parameters: {
+      query?: never
+      header?: {
+        'Last-Event-ID'?: string
+      }
+      path?: never
+      cookie?: never
+    }
+    requestBody?: never
+    responses: {
+      /** @description Event stream. */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'text/event-stream': string
+        }
+      }
+      403: components['responses']['Forbidden']
       500: components['responses']['InternalError']
     }
   }

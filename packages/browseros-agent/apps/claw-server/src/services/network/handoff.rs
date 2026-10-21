@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 pub const HANDOFF_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
 /// Keys that look like per-request noise. Matching is case-insensitive and by
-/// whole name, per design §4.
+/// whole name.
 const NOISE_NAMES: &[&str] = &[
     "_",
     "_t",
@@ -137,6 +137,7 @@ pub fn build_handoff(
     HandoffDraft {
         handoff: HandoffRow {
             id: handoff_id,
+            record_id: record.record_id.clone(),
             created_at: now_ms,
             expires_at: now_ms + HANDOFF_TTL_MS,
             source_meta,
@@ -144,12 +145,15 @@ pub fn build_handoff(
             response_headers: record.response_headers.clone(),
             request_body: record.post_data.clone(),
             body_id: None,
+            body_bytes: response_body
+                .as_ref()
+                .map(|bytes| bytes.len() as u64)
+                .unwrap_or(0),
             body_state: body_state.to_string(),
             body_reason,
             matcher_seed,
             suggested_ignore: suggested,
             related: Value::Array(related_json),
-            state: "open".to_string(),
             rule_id: None,
         },
         response_body,
@@ -157,7 +161,7 @@ pub fn build_handoff(
     }
 }
 
-/// §4 of the handoff design: name heuristic plus variation across samples.
+/// Names come from a heuristic plus variation across samples.
 #[must_use]
 pub fn suggested_ignore_keys(
     sample_query: &[(String, String)],

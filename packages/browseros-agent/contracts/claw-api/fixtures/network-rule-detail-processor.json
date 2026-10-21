@@ -1,0 +1,59 @@
+{
+  "rule": {
+    "id": "rule_01H8XQ4M7K9P2N3R4T5V6W7Y90",
+    "name": "价格归零",
+    "scope": "all_tabs",
+    "scopeTab": null,
+    "enabled": true,
+    "state": "active",
+    "action": "processor",
+    "authorClient": "claude-code",
+    "currentRevision": 1,
+    "hitCount": 3,
+    "method": "GET",
+    "pathname": "/api/items",
+    "origin": "https://shop.example.test",
+    "exactUrl": null,
+    "ignoreKeys": [],
+    "strictQuery": false,
+    "bodyFieldCount": 0,
+    "responseStatus": null,
+    "lastHit": null,
+    "createdAt": 1760000000000,
+    "updatedAt": 1760000000456
+  },
+  "revision": {
+    "revision": 1,
+    "createdAt": 1760000000456,
+    "matcher": {
+      "method": "GET",
+      "origin": "https://shop.example.test",
+      "pathname": "/api/items",
+      "exactUrl": null,
+      "sampleQuery": [["page", "1"]],
+      "queryPolicy": {
+        "mode": "lenient",
+        "ignoreKeys": []
+      },
+      "bodyFields": [],
+      "resourceType": "XHR",
+      "matcherVersion": 1
+    },
+    "action": {
+      "kind": "processor",
+      "script": "function process({ response }) {\n  const data = response.json()\n  for (const item of data.items) item.price = 0\n  return { body: data }\n}\n",
+      "timeoutMs": 200
+    },
+    "source": {
+      "handoffId": "netref_01H8XQ4M7K9P2N3R4T5V6W7Y91",
+      "recordId": "netrec_01H8XQ4M7K9P2N3R4T5V6W7Y92",
+      "tabId": 49351
+    }
+  },
+  "hits": [],
+  "sample": {
+    "available": true,
+    "status": 200,
+    "bytes": 5678
+  }
+}

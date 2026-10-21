@@ -48,20 +48,22 @@ paths:
     $ref: ./paths/network.yaml#/handoff
   /api/v1/network/rules:
     $ref: ./paths/network.yaml#/rules
+    delete:
+      $ref: ./paths/network.yaml#/ruleAll/delete
   /api/v1/network/rules/{id}:
     $ref: ./paths/network.yaml#/rule
   /api/v1/network/rules/{id}/restore:
     $ref: ./paths/network.yaml#/ruleRestore
-  /api/v1/network/rules/{id}/near-misses:
-    $ref: ./paths/network.yaml#/nearMisses
-  /api/v1/network/rules/{id}/ignore-keys:
-    $ref: ./paths/network.yaml#/ignoreKeys
   /api/v1/network/rules/{id}/test:
     $ref: ./paths/network.yaml#/ruleTest
+  /api/v1/network/rules/{id}/processor-test:
+    $ref: ./paths/network.yaml#/processorTest
   /api/v1/network/rules/{id}/revisions:
     $ref: ./paths/network.yaml#/revisions
   /api/v1/network/rules/{id}/revisions/{revision}/restore:
     $ref: ./paths/network.yaml#/revisionRestore
+  /api/v1/network/tabs/{tabId}/reload:
+    $ref: ./paths/network.yaml#/tabReload
   /api/v1/network/stop-all:
     $ref: ./paths/network.yaml#/stopAll
   /api/v1/network/hits:
@@ -144,6 +146,12 @@ components:
   schemas:
     ApiError:
       $ref: ./schemas/common.yaml#/ApiError
+    NetworkBrowserState:
+      $ref: ./schemas/network.yaml#/NetworkBrowserState
+    NetworkRulesState:
+      $ref: ./schemas/network.yaml#/NetworkRulesState
+    NetworkRuntimeState:
+      $ref: ./schemas/network.yaml#/NetworkRuntimeState
     NetworkCaptureTab:
       $ref: ./schemas/network.yaml#/NetworkCaptureTab
     NetworkCaptureState:
@@ -152,6 +160,12 @@ components:
       $ref: ./schemas/network.yaml#/NetworkStatus
     NetworkHeaderPair:
       $ref: ./schemas/network.yaml#/NetworkHeaderPair
+    NetworkHandoffSource:
+      $ref: ./schemas/network.yaml#/NetworkHandoffSource
+    NetworkHandoffView:
+      $ref: ./schemas/network.yaml#/NetworkHandoffView
+    NetworkQueryDiff:
+      $ref: ./schemas/network.yaml#/NetworkQueryDiff
     NetworkMockMark:
       $ref: ./schemas/network.yaml#/NetworkMockMark
     NetworkRecord:
@@ -160,6 +174,8 @@ components:
       $ref: ./schemas/network.yaml#/NetworkRecordList
     NetworkBodyPage:
       $ref: ./schemas/network.yaml#/NetworkBodyPage
+    NetworkTabReloadRequest:
+      $ref: ./schemas/network.yaml#/NetworkTabReloadRequest
     NetworkHandoffRequest:
       $ref: ./schemas/network.yaml#/NetworkHandoffRequest
     NetworkHandoffCreated:
@@ -172,6 +188,40 @@ components:
       $ref: ./schemas/network.yaml#/NetworkHandoffDetail
     NetworkRule:
       $ref: ./schemas/network.yaml#/NetworkRule
+    NetworkRuleDetail:
+      $ref: ./schemas/network.yaml#/NetworkRuleDetail
+    NetworkMatcher:
+      $ref: ./schemas/network.yaml#/NetworkMatcher
+    NetworkMatcherBodyField:
+      $ref: ./schemas/network.yaml#/NetworkMatcherBodyField
+    NetworkQueryPolicy:
+      $ref: ./schemas/network.yaml#/NetworkQueryPolicy
+    NetworkRuleRevision:
+      $ref: ./schemas/network.yaml#/NetworkRuleRevision
+    NetworkRuleRevisionList:
+      $ref: ./schemas/network.yaml#/NetworkRuleRevisionList
+    NetworkRuleTestResult:
+      $ref: ./schemas/network.yaml#/NetworkRuleTestResult
+    NetworkBodyPreview:
+      $ref: ./schemas/network.yaml#/NetworkBodyPreview
+    NetworkSampleInfo:
+      $ref: ./schemas/network.yaml#/NetworkSampleInfo
+    NetworkRevisionSource:
+      $ref: ./schemas/network.yaml#/NetworkRevisionSource
+    NetworkTestSample:
+      $ref: ./schemas/network.yaml#/NetworkTestSample
+    NetworkProcessorTestResult:
+      $ref: ./schemas/network.yaml#/NetworkProcessorTestResult
+    NetworkRuleAction:
+      $ref: ./schemas/network.yaml#/NetworkRuleAction
+    NetworkStaticAction:
+      $ref: ./schemas/network.yaml#/NetworkStaticAction
+    NetworkProcessorAction:
+      $ref: ./schemas/network.yaml#/NetworkProcessorAction
+    NetworkHitsDeleted:
+      $ref: ./schemas/network.yaml#/NetworkHitsDeleted
+    NetworkRulesDeleted:
+      $ref: ./schemas/network.yaml#/NetworkRulesDeleted
     NetworkRuleList:
       $ref: ./schemas/network.yaml#/NetworkRuleList
     NetworkRulePatch:
@@ -180,12 +230,6 @@ components:
       $ref: ./schemas/network.yaml#/NetworkRuleUpdated
     NetworkNearMiss:
       $ref: ./schemas/network.yaml#/NetworkNearMiss
-    NetworkNearMissList:
-      $ref: ./schemas/network.yaml#/NetworkNearMissList
-    NetworkIgnoreKeysRequest:
-      $ref: ./schemas/network.yaml#/NetworkIgnoreKeysRequest
-    NetworkIgnoreKeysResult:
-      $ref: ./schemas/network.yaml#/NetworkIgnoreKeysResult
     NetworkRestoreRequest:
       $ref: ./schemas/network.yaml#/NetworkRestoreRequest
     NetworkRestoreResult:

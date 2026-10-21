@@ -36,6 +36,14 @@ impl BodyStore {
             .join(format!("{}.bin", validate_id(record_id)?)))
     }
 
+    fn sample_path(&self, rule_id: &str, revision: u32) -> AppResult<PathBuf> {
+        Ok(self
+            .root
+            .join("rules")
+            .join(validate_id(rule_id)?)
+            .join(format!("{revision}.sample.bin")))
+    }
+
     fn handoff_path(&self, handoff_id: &str) -> AppResult<PathBuf> {
         Ok(self
             .root
@@ -113,6 +121,125 @@ impl BodyStore {
             .parse::<u32>()
             .map_err(|_| AppError::InvalidStoragePath(body_id.to_string()))?;
         read_all(&self.rule_path(rule_id, revision)?).await
+    }
+
+    /// The rule's sample body, captured when the rule was seeded.
+    pub async fn write_rule_sample(
+        &self,
+        rule_id: &str,
+        revision: u32,
+        bytes: &[u8],
+    ) -> AppResult<()> {
+        let path = self.sample_path(rule_id, revision)?;
+        write_atomic(&path, bytes).await?;
+        Ok(())
+    }
+
+    pub async fn read_rule_sample(
+        &self,
+        rule_id: &str,
+        revision: u32,
+    ) -> AppResult<Option<Vec<u8>>> {
+        read_all(&self.sample_path(rule_id, revision)?).await
+    }
+
+    pub async fn read_handoff_range(
+        &self,
+        handoff_id: &str,
+        offset: u64,
+        limit: u64,
+    ) -> AppResult<Option<(Vec<u8>, u64)>> {
+        read_range(&self.handoff_path(handoff_id)?, offset, limit).await
+    }
+
+    /// Removes `rules/` and `handoffs/` directories the database no longer
+    /// knows about, including bodies left behind by earlier versions. Files modified
+    /// within the last minute are kept, so a commit in flight is never deleted
+    /// from under the transaction that just wrote it.
+    pub async fn sweep_orphans(
+        &self,
+        live_rules: &[String],
+        live_handoffs: &[String],
+    ) -> AppResult<Vec<String>> {
+        let mut removed = Vec::new();
+        for (directory, live) in [("rules", live_rules), ("handoffs", live_handoffs)] {
+            let parent = self.root.join(directory);
+            let names = match tokio::fs::read_dir(&parent).await {
+                Ok(mut entries) => {
+                    let mut names = Vec::new();
+                    loop {
+                        match entries.next_entry().await {
+                            Ok(None) => break,
+                            Ok(Some(entry)) => {
+                                names.push(entry.file_name().to_string_lossy().to_string())
+                            }
+                            Err(error) => {
+                                return Err(AppError::Io {
+                                    path: Some(parent.clone()),
+                                    source: error,
+                                });
+                            }
+                        }
+                    }
+                    names
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(AppError::Io {
+                        path: Some(parent.clone()),
+                        source: error,
+                    });
+                }
+            };
+            for name in names {
+                if live.contains(&name) {
+                    continue;
+                }
+                let path = parent.join(&name);
+                let metadata = match tokio::fs::metadata(&path).await {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(AppError::Io {
+                            path: Some(path.clone()),
+                            source: error,
+                        });
+                    }
+                };
+                if !metadata.is_dir() {
+                    continue;
+                }
+                // Leave anything written in the last minute alone: a commit in
+                // flight must not lose the file the transaction just wrote.
+                let age = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.elapsed().ok())
+                    .map(|age| age.as_secs())
+                    .unwrap_or(u64::MAX);
+                if age < 60 {
+                    continue;
+                }
+                remove_dir_if_present(&path).await?;
+                removed.push(format!("{directory}/{name}"));
+            }
+        }
+        Ok(removed)
+    }
+
+    pub async fn read_rule_range(
+        &self,
+        body_id: &str,
+        offset: u64,
+        limit: u64,
+    ) -> AppResult<Option<(Vec<u8>, u64)>> {
+        let Some((rule_id, revision)) = body_id.split_once('/') else {
+            return Ok(None);
+        };
+        let revision = revision
+            .parse::<u32>()
+            .map_err(|_| AppError::InvalidStoragePath(body_id.to_string()))?;
+        read_range(&self.rule_path(rule_id, revision)?, offset, limit).await
     }
 
     pub async fn remove_rule(&self, rule_id: &str) -> AppResult<()> {

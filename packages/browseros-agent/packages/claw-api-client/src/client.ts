@@ -10,6 +10,31 @@ import type {
   ConnectionList,
   FeedbackInvitation,
   HealthResponse,
+  NetworkBodyPage,
+  NetworkCaptureState,
+  NetworkDeleted,
+  NetworkHandoffCreated,
+  NetworkHandoffDetail,
+  NetworkHandoffList,
+  NetworkHandoffRequest,
+  NetworkHitList,
+  NetworkHitsDeleted,
+  NetworkProcessorTestResult,
+  NetworkRecord,
+  NetworkRecordList,
+  NetworkRecordsCleared,
+  NetworkRestoreRequest,
+  NetworkRestoreResult,
+  NetworkRuleDetail,
+  NetworkRuleList,
+  NetworkRulePatch,
+  NetworkRuleRevisionList,
+  NetworkRulesDeleted,
+  NetworkRuleTestResult,
+  NetworkRuleUpdated,
+  NetworkStatus,
+  NetworkStopAllResult,
+  NetworkTabReloadRequest,
   RecordFeedbackInviteRequest,
   RecordingMetadata,
   ResolveHelpResponse,
@@ -53,6 +78,39 @@ export type ListSessionsRequest = NonNullable<
 
 export interface UpdateTelemetryOperationRequest {
   updateTelemetryRequest: operations['updateTelemetry']['requestBody']['content']['application/json']
+}
+
+export type NetworkRecordIdRequest = NonNullable<
+  NonNullable<paths['/api/v1/network/records/{recordId}']['get']>['parameters']
+>['path']
+
+export type NetworkHandoffIdRequest = NonNullable<
+  NonNullable<paths['/api/v1/network/handoffs/{id}']['get']>['parameters']
+>['path']
+
+export type NetworkRuleIdRequest = NonNullable<
+  NonNullable<paths['/api/v1/network/rules/{id}']['get']>['parameters']
+>['path']
+
+export type NetworkTabIdRequest = NonNullable<
+  NonNullable<
+    paths['/api/v1/network/tabs/{tabId}/reload']['post']
+  >['parameters']
+>['path']
+
+export type NetworkBodyRequest = NetworkRecordIdRequest & {
+  offset?: number
+  limit?: number
+}
+
+function bodyQuery(request: NetworkBodyRequest): {
+  offset?: number
+  limit?: number
+} {
+  const query: { offset?: number; limit?: number } = {}
+  if (request.offset !== undefined) query.offset = request.offset
+  if (request.limit !== undefined) query.limit = request.limit
+  return query
 }
 
 type RecordingHeaders =
@@ -326,6 +384,250 @@ export class ClawApiClient {
     return this.unwrap(
       await this.client.DELETE('/api/v1/connections/{harness}', {
         params: { path: request },
+      }),
+    )
+  }
+
+  // ---- network mock ----------------------------------------------------
+
+  async getNetworkState(): Promise<NetworkStatus> {
+    return this.unwrap(await this.client.GET('/api/v1/network/state'))
+  }
+
+  async startNetworkCapture(): Promise<NetworkCaptureState> {
+    return this.unwrap(await this.client.POST('/api/v1/network/captures'))
+  }
+
+  async stopNetworkCapture(): Promise<NetworkCaptureState> {
+    return this.unwrap(await this.client.DELETE('/api/v1/network/captures'))
+  }
+
+  async listNetworkRecords(request?: {
+    since?: number
+    limit?: number
+  }): Promise<NetworkRecordList> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/records', {
+        params: { query: request ?? {} },
+      }),
+    )
+  }
+
+  async deleteNetworkRecords(): Promise<NetworkRecordsCleared> {
+    return this.unwrap(await this.client.DELETE('/api/v1/network/records'))
+  }
+
+  async getNetworkRecord(
+    request: NetworkRecordIdRequest,
+  ): Promise<NetworkRecord> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/records/{recordId}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async deleteNetworkRecord(
+    request: NetworkRecordIdRequest,
+  ): Promise<NetworkDeleted> {
+    return this.unwrap(
+      await this.client.DELETE('/api/v1/network/records/{recordId}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async restoreNetworkRecord(
+    body: NetworkRestoreRequest,
+  ): Promise<NetworkRestoreResult> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/records/restore', { body }),
+    )
+  }
+
+  async getNetworkRequestBody(
+    request: NetworkBodyRequest,
+  ): Promise<NetworkBodyPage> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/records/{recordId}/request-body', {
+        params: { path: request, query: bodyQuery(request) },
+      }),
+    )
+  }
+
+  async getNetworkResponseBody(
+    request: NetworkBodyRequest,
+  ): Promise<NetworkBodyPage> {
+    return this.unwrap(
+      await this.client.GET(
+        '/api/v1/network/records/{recordId}/response-body',
+        {
+          params: { path: request, query: bodyQuery(request) },
+        },
+      ),
+    )
+  }
+
+  async listNetworkHandoffs(): Promise<NetworkHandoffList> {
+    return this.unwrap(await this.client.GET('/api/v1/network/handoffs'))
+  }
+
+  async createNetworkHandoff(
+    body: NetworkHandoffRequest,
+  ): Promise<NetworkHandoffCreated> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/handoffs', { body }),
+    )
+  }
+
+  async getNetworkHandoff(
+    request: NetworkHandoffIdRequest,
+  ): Promise<NetworkHandoffDetail> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/handoffs/{id}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async deleteNetworkHandoff(
+    request: NetworkHandoffIdRequest,
+  ): Promise<NetworkDeleted> {
+    return this.unwrap(
+      await this.client.DELETE('/api/v1/network/handoffs/{id}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async listNetworkRules(): Promise<NetworkRuleList> {
+    return this.unwrap(await this.client.GET('/api/v1/network/rules'))
+  }
+
+  async deleteAllNetworkRules(): Promise<NetworkRulesDeleted> {
+    return this.unwrap(await this.client.DELETE('/api/v1/network/rules'))
+  }
+
+  async getNetworkRule(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkRuleDetail> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/rules/{id}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async patchNetworkRule(
+    request: NetworkRuleIdRequest,
+    body: NetworkRulePatch,
+  ): Promise<NetworkRuleUpdated> {
+    return this.unwrap(
+      await this.client.PATCH('/api/v1/network/rules/{id}', {
+        params: { path: request },
+        body,
+      }),
+    )
+  }
+
+  async deleteNetworkRule(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkDeleted> {
+    return this.unwrap(
+      await this.client.DELETE('/api/v1/network/rules/{id}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async restoreNetworkRule(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkRestoreResult> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/rules/{id}/restore', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async testNetworkRule(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkRuleTestResult> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/rules/{id}/test', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async testNetworkProcessor(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkProcessorTestResult> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/rules/{id}/processor-test', {
+        params: { path: request },
+        body: {},
+      }),
+    )
+  }
+
+  async listNetworkRuleRevisions(
+    request: NetworkRuleIdRequest,
+  ): Promise<NetworkRuleRevisionList> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/rules/{id}/revisions', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async restoreNetworkRuleRevision(request: {
+    id: string
+    revision: number
+  }): Promise<NetworkRuleUpdated> {
+    return this.unwrap(
+      await this.client.POST(
+        '/api/v1/network/rules/{id}/revisions/{revision}/restore',
+        {
+          params: { path: request },
+        },
+      ),
+    )
+  }
+
+  async reloadNetworkTab(
+    request: NetworkTabIdRequest,
+    body: NetworkTabReloadRequest,
+  ): Promise<void> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/network/tabs/{tabId}/reload', {
+        params: { path: request },
+        body,
+      }),
+    )
+  }
+
+  async stopAllNetworkMocks(): Promise<NetworkStopAllResult> {
+    return this.unwrap(await this.client.POST('/api/v1/network/stop-all'))
+  }
+
+  async listNetworkHits(request?: {
+    ruleId?: string
+    limit?: number
+  }): Promise<NetworkHitList> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/network/hits', {
+        params: { query: request ?? {} },
+      }),
+    )
+  }
+
+  async deleteNetworkHits(request: {
+    ruleId: string
+  }): Promise<NetworkHitsDeleted> {
+    return this.unwrap(
+      await this.client.DELETE('/api/v1/network/hits', {
+        params: { query: request },
       }),
     )
   }

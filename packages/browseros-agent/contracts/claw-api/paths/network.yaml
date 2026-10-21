@@ -266,15 +266,14 @@ rule:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: ../schemas/network.yaml#/NetworkRuleDetail
       '404':
         $ref: ../responses.yaml#/NotFound
       '500':
         $ref: ../responses.yaml#/InternalError
   patch:
     operationId: patchNetworkRule
-    summary: Enable or disable one rule. Returns active only after Fetch was read back.
+    summary: Enable or disable, change the scope, or rename one rule.
     parameters:
       - $ref: '#/parameters/RuleId'
     requestBody:
@@ -312,6 +311,19 @@ rule:
         $ref: ../responses.yaml#/NotFound
       '500':
         $ref: ../responses.yaml#/InternalError
+ruleAll:
+  delete:
+    operationId: deleteAllNetworkRules
+    summary: Soft-delete every rule; each one can be undone for eight seconds.
+    responses:
+      '200':
+        description: Number of deleted rules.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkRulesDeleted
+      '500':
+        $ref: ../responses.yaml#/InternalError
 ruleRestore:
   post:
     operationId: restoreNetworkRule
@@ -341,8 +353,7 @@ ruleTest:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: ../schemas/network.yaml#/NetworkRuleTestResult
       '404':
         $ref: ../responses.yaml#/NotFound
       '500':
@@ -359,8 +370,7 @@ revisions:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: ../schemas/network.yaml#/NetworkRuleRevisionList
       '500':
         $ref: ../responses.yaml#/InternalError
 revisionRestore:
@@ -380,10 +390,34 @@ revisionRestore:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
+              $ref: ../schemas/network.yaml#/NetworkRuleUpdated
       '404':
         $ref: ../responses.yaml#/NotFound
+      '500':
+        $ref: ../responses.yaml#/InternalError
+processorTest:
+  post:
+    operationId: testNetworkProcessor
+    summary: Run the rule's processor script against its sample body.
+    parameters:
+      - $ref: '#/parameters/RuleId'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkEmptyRequest
+    responses:
+      '200':
+        description: Dry-run result.
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/network.yaml#/NetworkProcessorTestResult
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '409':
+        $ref: ../responses.yaml#/Conflict
       '500':
         $ref: ../responses.yaml#/InternalError
 stopAll:
@@ -397,6 +431,31 @@ stopAll:
           application/json:
             schema:
               $ref: ../schemas/network.yaml#/NetworkStopAllResult
+      '500':
+        $ref: ../responses.yaml#/InternalError
+tabReload:
+  post:
+    operationId: reloadNetworkTab
+    summary: Reload a captured tab, optionally bypassing the cache.
+    parameters:
+      - name: tabId
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../schemas/network.yaml#/NetworkTabReloadRequest
+    responses:
+      '204':
+        description: Reload requested.
+      '404':
+        $ref: ../responses.yaml#/NotFound
+      '503':
+        $ref: ../responses.yaml#/InternalError
       '500':
         $ref: ../responses.yaml#/InternalError
 hits:
@@ -439,7 +498,7 @@ hits:
         content:
           application/json:
             schema:
-              $ref: ../schemas/network.yaml#/NetworkDeleted
+              $ref: ../schemas/network.yaml#/NetworkHitsDeleted
       '400':
         $ref: ../responses.yaml#/BadRequest
       '500':
@@ -496,43 +555,3 @@ parameters:
     required: false
     schema:
       type: integer
-nearMisses:
-  get:
-    operationId: listNetworkRuleNearMisses
-    summary: Explain recent captured requests that did not match a rule.
-    parameters:
-      - $ref: '#/parameters/RuleId'
-    responses:
-      '200':
-        description: Near misses.
-        content:
-          application/json:
-            schema:
-              $ref: ../schemas/network.yaml#/NetworkNearMissList
-      '404':
-        $ref: ../responses.yaml#/NotFound
-      '500':
-        $ref: ../responses.yaml#/InternalError
-ignoreKeys:
-  post:
-    operationId: fixNetworkRuleQueryMismatch
-    summary: Add ignored query keys and create a new revision.
-    parameters:
-      - $ref: '#/parameters/RuleId'
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: ../schemas/network.yaml#/NetworkIgnoreKeysRequest
-    responses:
-      '200':
-        description: New revision.
-        content:
-          application/json:
-            schema:
-              $ref: ../schemas/network.yaml#/NetworkIgnoreKeysResult
-      '404':
-        $ref: ../responses.yaml#/NotFound
-      '500':
-        $ref: ../responses.yaml#/InternalError

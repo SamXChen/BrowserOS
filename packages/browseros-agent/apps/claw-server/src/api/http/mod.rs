@@ -100,7 +100,10 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/network/handoffs/{id}",
             get(network::get_handoff).delete(network::delete_handoff),
         )
-        .route("/api/v1/network/rules", get(network::rules))
+        .route(
+            "/api/v1/network/rules",
+            get(network::rules).delete(network::delete_rules),
+        )
         .route(
             "/api/v1/network/rules/{id}",
             get(network::rule)
@@ -111,15 +114,15 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/network/rules/{id}/restore",
             post(network::restore_rule),
         )
-        .route(
-            "/api/v1/network/rules/{id}/near-misses",
-            get(network::near_misses),
-        )
-        .route(
-            "/api/v1/network/rules/{id}/ignore-keys",
-            post(network::ignore_keys),
-        )
         .route("/api/v1/network/rules/{id}/test", post(network::test_rule))
+        .route(
+            "/api/v1/network/rules/{id}/processor-test",
+            post(network::processor_test),
+        )
+        .route(
+            "/api/v1/network/tabs/{tabId}/reload",
+            post(network::reload_tab),
+        )
         .route(
             "/api/v1/network/rules/{id}/revisions",
             get(network::revisions),
@@ -313,14 +316,50 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
 
 /// Network data is readable by the extension and by native (originless) clients
 /// only. Any other page origin, including the opaque `null`, is rejected.
+/// Loopback hosts the network API accepts, so a DNS-rebinding page cannot
+/// reach it by pointing some other name at 127.0.0.1.
+fn host_is_loopback(headers: &axum::http::HeaderMap) -> bool {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let host = host.rsplit_once('@').map_or(host, |(_, host)| host);
+    // `[::1]:9310` keeps everything up to the closing bracket; anything else
+    // drops a trailing `:port`.
+    let address = match host.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(address, _)| address),
+        None => host.rsplit_once(':').map_or(host, |(address, _)| address),
+    };
+    matches!(address, "127.0.0.1" | "localhost" | "::1" | "[::1]")
+}
+
+/// The network API serves the extension and native MCP clients only.
+///
+/// A browser request without `Origin` is still checked against
+/// `Sec-Fetch-Site`: an `<img>` from another site would otherwise be able to
+/// read capture data if DNS ever resolved a remote name to loopback.
 fn trusted_network_origin(headers: &axum::http::HeaderMap) -> bool {
+    if !host_is_loopback(headers) {
+        return false;
+    }
     match headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
     {
-        None => true,
         Some(BROWSERCLAW_EXTENSION_ORIGIN) => true,
         Some(_) => false,
+        // Native clients (curl, MCP) send no Origin and no Sec-Fetch-Site.
+        None => {
+            !headers.contains_key("sec-fetch-site")
+                || matches!(
+                    headers
+                        .get("sec-fetch-site")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("none") | Some("same-origin")
+                )
+        }
     }
 }
 
@@ -371,5 +410,76 @@ fn trusted_update_origin(headers: &axum::http::HeaderMap) -> bool {
         Some(BROWSERCLAW_EXTENSION_ORIGIN) => true,
         None => !headers.contains_key("sec-fetch-site"),
         Some(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod network_origin_tests {
+    #![allow(clippy::expect_used)]
+    use super::{BROWSERCLAW_EXTENSION_ORIGIN, host_is_loopback, trusted_network_origin};
+    use axum::http::{HeaderMap, HeaderName, HeaderValue};
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                HeaderName::from_bytes(name.as_bytes()).expect("header name"),
+                HeaderValue::from_str(value).expect("header value"),
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn loopback_hosts_are_accepted_and_others_rejected() {
+        assert!(host_is_loopback(&headers(&[("host", "127.0.0.1:9310")])));
+        assert!(host_is_loopback(&headers(&[("host", "localhost:9310")])));
+        assert!(host_is_loopback(&headers(&[("host", "[::1]:9310")])));
+        assert!(!host_is_loopback(&headers(&[("host", "evil.example")])));
+        assert!(!host_is_loopback(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn extension_origin_is_always_trusted_on_loopback() {
+        assert!(trusted_network_origin(&headers(&[
+            ("host", "127.0.0.1:9310"),
+            ("origin", BROWSERCLAW_EXTENSION_ORIGIN),
+        ])));
+    }
+
+    #[test]
+    fn foreign_origin_is_rejected_even_on_loopback() {
+        assert!(!trusted_network_origin(&headers(&[
+            ("host", "127.0.0.1:9310"),
+            ("origin", "http://evil.example"),
+        ])));
+        assert!(!trusted_network_origin(&headers(&[
+            ("host", "127.0.0.1:9310"),
+            ("origin", "null"),
+        ])));
+    }
+
+    #[test]
+    fn without_origin_the_site_header_decides() {
+        assert!(trusted_network_origin(&headers(&[(
+            "host",
+            "127.0.0.1:9310"
+        )])));
+        assert!(!trusted_network_origin(&headers(&[
+            ("host", "127.0.0.1:9310"),
+            ("sec-fetch-site", "cross-site"),
+        ])));
+        assert!(trusted_network_origin(&headers(&[
+            ("host", "127.0.0.1:9310"),
+            ("sec-fetch-site", "same-origin"),
+        ])));
+    }
+
+    #[test]
+    fn a_rebound_host_is_rejected_even_without_origin() {
+        assert!(!trusted_network_origin(&headers(&[(
+            "host",
+            "evil.example:9310"
+        )])));
     }
 }

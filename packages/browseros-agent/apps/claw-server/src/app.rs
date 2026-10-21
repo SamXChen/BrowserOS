@@ -179,6 +179,7 @@ impl AppState {
             }),
             &database,
             &config.browserclaw_dir,
+            None,
         )
         .await?;
         let live_recordings = LiveRecordingBus::new();

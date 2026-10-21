@@ -42,12 +42,14 @@ never redirects to the focused profile; default_profile_unavailable needs
 browser_target set."#;
 
 const NETWORK_GUIDANCE: &str = r#"Network mock handoff: when the user pastes a netref_* reference, call the network tool with action="handoff_get" and that handoffId. Do not rebuild the request from the URL, reopen the page, or patch fetch inside run.
-- Prefer action="rule_apply" with response.body {kind:"patch_sample", jsonPatch:[...]} for small edits; use literal only for a whole intentional body. Bodies over 512KiB are summarized by handoff_get: use patch_sample instead of trying to paste them.
-- Keep matcherSeed. Add ignoreKeys only for names like nonce/ts or values that differ across related samples. Use strictQuery or bodyFields when the user needs exact matching.
-- dryRun:true reports matched history, the winner, and replaced rules. Apply, then only say it is live when state is "active"; apply_failed and superseded are not success.
+- Rules have names: pass a rule name or rule_* id as rule to rule_get / rule_apply / rule_status / cleanup. Use rule_list when you do not know the name. Name new rules after the scenario and tell the user the name.
+- Prefer response.body {kind:"patch_sample" | "patch_current", jsonPatch:[...]} for small edits; use literal only for a whole intentional body. Large bodies are paged with bodyOffset/bodyLimit; do not paste them back.
+- Live-data edits: processor {script} defining a synchronous function process({request, response}) that returns {status?, statusText?, headers?, setHeaders?, body?} or undefined; no network, timers or state; set-cookie can be appended (same name+path overwrites, Max-Age=0 deletes); failures pass the original response through.
+- Keep matcherSeed. Add ignoreKeys only for names like nonce/ts or values that differ across related samples; use strictQuery or bodyFields when the user needs exact matching. dryRun:true previews matches, the winner and replaced rules.
+- Only say it is live when state is "active". pending means saved and waiting for the browser (it goes live automatically); superseded means the user stopped all mocks meanwhile.
 - Rules apply to all tabs by default; say so, and note the Network panel switch can turn them off. Do not refresh the user's page unless they ask.
-- After the user refreshes, call rule_status. fulfilled/confirmed means it hit; nearMisses gives query/method/body differences; blocked usually means CORS; no_request_seen means the request was not emitted.
-- "Turn it off" is rule_apply enabled:false, not deletion. Delete only when asked; batch deletion requires restating the count and explicit confirmation. Finishing a task must not delete rules, handoffs, or the user's tabs."#;
+- After the user refreshes, call rule_status. fulfilled or processed means it hit; processor_error/processor_timeout means the script failed; nearMisses gives query/method/body differences; blocked usually means CORS; no_request_seen means the request was not emitted.
+- "Turn it off" is rule_apply {rule, enabled:false}, not deletion. Delete only when asked; batch deletion requires restating the count and explicit confirmation. Finishing a task must not delete rules, handoffs, or the user's tabs."#;
 
 const PRESERVE_USEFUL_PAGES: &str = "- Preserve useful pages: leave anything the user may want to inspect open\n  instead of closing it when the task ends.";
 
