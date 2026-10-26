@@ -2,9 +2,11 @@ use crate::db::MigrationOutcome;
 use crate::{AppState, VERSION};
 use axum::{Json, extract::State, http::StatusCode};
 use claw_api::models::{
-    BrowserLink, HealthResponse, SchemaStatus, ShutdownResponse, SystemCapabilities,
-    SystemDiagnostics, SystemInfo, system_capabilities::RecordingIngestVersion,
+    BrowserLink, BuildInfo as BuildInfoDto, BuildInfoIntegrity, HealthResponse, SchemaStatus,
+    ShutdownResponse, SystemCapabilities, SystemDiagnostics, SystemInfo,
+    system_capabilities::RecordingIngestVersion,
 };
+use crate::services::build_info::{BuildInfo, Integrity};
 
 /// Liveness, plus the state of the link this server exists to provide.
 ///
@@ -50,7 +52,27 @@ async fn health_report(state: &AppState) -> HealthResponse {
     };
     HealthResponse {
         browser: Some(Box::new(browser)),
+        build: Some(Box::new(build_dto(
+            state.build_info.get().cloned().unwrap_or_else(BuildInfo::pending),
+        ))),
         ..HealthResponse::default()
+    }
+}
+
+/// Maps the computed identity onto the contract DTO. `Pending` is a real state the
+/// launcher can observe for the first moments after a start, so it is published rather
+/// than hidden.
+fn build_dto(info: BuildInfo) -> BuildInfoDto {
+    BuildInfoDto {
+        version: info.version,
+        release_sha: info.release_sha,
+        binary_sha256: info.binary_sha256,
+        integrity: match info.integrity {
+            Integrity::Pending => BuildInfoIntegrity::Pending,
+            Integrity::Ok => BuildInfoIntegrity::Ok,
+            Integrity::Mismatch => BuildInfoIntegrity::Mismatch,
+            Integrity::Absent => BuildInfoIntegrity::Absent,
+        },
     }
 }
 

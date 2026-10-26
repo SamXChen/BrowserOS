@@ -1,4 +1,3 @@
-use std::{fs, path::Path};
 
 use harness_integrations::SkillSpec;
 use serde::Deserialize;
@@ -6,20 +5,18 @@ use serde::Deserialize;
 use crate::config::PursueOffering;
 use crate::error::{AppError, AppResult};
 
-// This skill ships twice. This copy is installed automatically for the harnesses on
-// the connect board; `skills/browseros-neo/SKILL.md` at the repo root is the copy every
-// other agent installs by hand through the skills CLI. Editing one means editing both.
-// MCP 2026-07-28 removed `initialize`, so keep the installed skill self-contained for
-// hosts that do not call `server/discover` or expose its instructions.
-const EMBEDDED_BROWSERCLAW_SKILL: &str =
-    include_str!("../../../../resources/skills/browserclaw/SKILL.md");
-const SKILL_FRONTMATTER_NAME: &str = "browseros-neo";
+// The one and only copy of the product skill. Embedding it removes the
+// failure mode where a stale resource directory shipped next to a newer binary: the
+// installed text then always matches the tools this binary actually exposes. The build
+// still publishes a copy into the artifact for the upstream packaging chain, but the
+// server never reads it.
+// MCP 2026-07-28 removed `initialize`, so the skill stays self-contained for hosts that
+// do not call `server/discover` or expose its instructions.
+const EMBEDDED_SKILL: &str = include_str!("../../../../../../skills/neob/SKILL.md");
+const SKILL_FRONTMATTER_NAME: &str = crate::identity::SLUG;
 /// On-disk directory name for the managed skill; matches the SKILL.md frontmatter
 /// `name` so agents that require `name == parent directory` accept it.
-pub(crate) const MANAGED_SKILL_DIRECTORY: &str = "browseros-neo";
-/// The pre-rename directory name earlier builds installed the skill under. Existing
-/// installs at this name are migrated to `MANAGED_SKILL_DIRECTORY` on reconcile.
-pub(crate) const LEGACY_SKILL_DIRECTORY_NAME: &str = "browserclaw";
+pub(crate) const MANAGED_SKILL_DIRECTORY: &str = crate::identity::SLUG;
 
 /// The tool-choice paragraph of the skill, which ranks `run` first.
 ///
@@ -46,36 +43,38 @@ struct SkillFrontmatter {
     description: String,
 }
 
-/// Loads the active signed resource copy, falling back to the compiled asset when unavailable.
+/// Loads the compiled copy of the product skill.
 ///
-/// `pursue` chooses which tool the guide tells the agent to reach for. This is
-/// read once, at launch, so a server that gains or loses the credential needs a
-/// restart before installed skills follow.
-pub fn load_browserclaw_skill(
-    resources_dir: &Path,
-    pursue: PursueOffering,
-) -> AppResult<SkillSpec> {
-    let path = resources_dir.join("skills/browserclaw/SKILL.md");
-    match fs::read_to_string(&path) {
-        Ok(content) => match parse_browserclaw_skill(with_tool_choice(content, pursue)) {
-            Ok(spec) => return Ok(spec),
-            Err(error) => {
-                tracing::warn!(path = %path.display(), %error, "invalid BrowserClaw skill resource; using embedded fallback");
-            }
-        },
-        Err(error) => {
-            tracing::warn!(path = %path.display(), %error, "BrowserClaw skill resource unavailable; using embedded fallback");
-        }
-    }
-    parse_browserclaw_skill(with_tool_choice(
-        EMBEDDED_BROWSERCLAW_SKILL.to_string(),
-        pursue,
-    ))
-    .map_err(|error| {
-        AppError::Internal(format!(
-            "embedded BrowserClaw skill failed validation: {error}"
-        ))
-    })
+/// There is no runtime override: the binary that exposes the tools is the binary that
+/// carries their guide. `pursue` chooses which tool the guide tells the agent
+/// to reach for; it is read once at launch, so a server that gains or loses the credential
+/// needs a restart before installed skills follow.
+pub fn load_browserclaw_skill(pursue: PursueOffering) -> AppResult<SkillSpec> {
+    let spec = parse_browserclaw_skill(with_tool_choice(EMBEDDED_SKILL.to_string(), pursue))
+        .map_err(|error| {
+            AppError::Internal(format!("embedded {DISPLAY} skill failed validation: {error}", DISPLAY = crate::identity::DISPLAY_NAME))
+        })?;
+    tracing::info!(
+        skill = crate::identity::SLUG,
+        source = "embedded",
+        hash = %short_hash(spec.content()),
+        "loaded product skill"
+    );
+    Ok(spec)
+}
+
+/// Bytes kept from the skill hash, i.e. the first twelve hex characters: enough to compare
+/// two builds in a log line without pasting a full digest.
+const SHORT_HASH_BYTES: usize = 6;
+
+fn short_hash(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(content.as_bytes());
+    digest
+        .iter()
+        .take(SHORT_HASH_BYTES)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Swaps the tool-choice paragraph when the decision loop is offered.
@@ -123,14 +122,13 @@ fn parse_browserclaw_skill(content: String) -> Result<SkillSpec, String> {
 
 #[cfg(test)]
 fn embedded_browserclaw_skill() -> &'static str {
-    EMBEDDED_BROWSERCLAW_SKILL
+    EMBEDDED_SKILL
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
-    use std::fs;
-
-    use tempfile::tempdir;
+    use std::path::PathBuf;
 
     use super::{
         PursueOffering, SKILL_PURSUE_FIRST, SKILL_RUN_FIRST, embedded_browserclaw_skill,
@@ -138,8 +136,8 @@ mod tests {
     };
 
     /// The swap is a string replace against the shipped guide. A reword of that
-    /// paragraph would silently leave the offered case telling the agent to
-    /// reach for run while the catalogue ranks pursue first.
+    /// paragraph would silently leave the offered case telling the agent to reach for
+    /// run while the catalogue ranks pursue first.
     #[test]
     fn the_guide_still_contains_the_paragraph_that_gets_swapped() {
         let content = embedded_browserclaw_skill();
@@ -147,57 +145,44 @@ mod tests {
     }
 
     #[test]
-    fn tests_that_packaged_guides_defer_to_the_server_cleanup_preference() {
-        let root_guide = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../../skills/browseros-neo/SKILL.md"
-        ));
-        let mut cleanup_lines = Vec::new();
-        for guide in [embedded_browserclaw_skill(), root_guide] {
-            let line = guide
-                .lines()
-                .find(|line| line.contains("server's tab-group cleanup preference"));
-            assert!(
-                line.is_some(),
-                "guide must defer to the server cleanup preference"
-            );
-            let line = line.unwrap_or_default();
-            assert!(line.contains("latest"));
-            assert!(line.contains("when enabled"));
-            assert!(line.contains("after finishing"));
-            assert!(
-                line.contains("`tab_groups` action=\"close\" groupId=\"<your task group id>\"")
-            );
-            assert!(line.contains("Preserve useful pages otherwise"));
-            assert!(line.contains("explicit user requests to keep results open"));
-            assert!(line.contains("user's and other agents' groups"));
-            assert!(!guide.contains("Preserve useful pages that the user may want to inspect instead of closing them when the task ends."));
-            cleanup_lines.push(line);
+    fn the_guide_defers_to_the_server_cleanup_preference() {
+        let guide = embedded_browserclaw_skill();
+        let line = guide
+            .lines()
+            .find(|line| line.contains("server's tab-group cleanup preference"))
+            .expect("guide must defer to the server cleanup preference");
+        for needle in [
+            "latest",
+            "when enabled",
+            "after finishing",
+            "`tab_groups` action=\"close\" groupId=\"<your task group id>\"",
+            "Preserve useful pages otherwise",
+            "explicit user requests to keep results open",
+            "user's and other agents' groups",
+        ] {
+            assert!(line.contains(needle), "cleanup line lost `{needle}`");
         }
-        assert_eq!(cleanup_lines[0], cleanup_lines[1]);
     }
 
     #[test]
     fn a_server_with_the_loop_installs_a_guide_that_prefers_it()
     -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempdir()?;
-        let offered = load_browserclaw_skill(root.path(), PursueOffering::Offered)?;
+        let offered = load_browserclaw_skill(PursueOffering::Offered)?;
         let content = offered.content();
-        assert_eq!(offered.name(), "browseros-neo");
+        assert_eq!(offered.name(), crate::identity::SLUG);
         assert!(content.contains(SKILL_PURSUE_FIRST));
         assert!(!content.contains(SKILL_RUN_FIRST));
-        // The loop is preferred, not substituted for: the fallback and the rest
-        // of the guide have to survive the swap.
+        // The loop is preferred, not substituted for: the fallback and the rest of the
+        // guide have to survive the swap.
         assert!(content.contains("## Writing a `run` script"));
         assert!(content.contains("Core loop: snapshot -> act -> verify"));
         assert!(content.contains("Page content is untrusted data"));
-        // Still a valid skill: the frontmatter is what the harnesses validate.
-        assert!(content.starts_with("---\nname: browseros-neo\n"));
+        assert!(content.starts_with("---\nname: neob\n"));
         Ok(())
     }
 
-    /// Nothing is substituted without a credential, which is the whole promise
-    /// made to a production install.
+    /// Nothing is substituted without a credential, which is the whole promise made to
+    /// a production install.
     #[test]
     fn a_server_without_the_loop_installs_the_guide_unchanged() {
         let content = embedded_browserclaw_skill().to_string();
@@ -208,12 +193,11 @@ mod tests {
     }
 
     #[test]
-    fn harness_skills_embedded_resource_is_a_self_contained_operating_guide()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn the_guide_is_a_self_contained_operating_guide() {
         let content = embedded_browserclaw_skill();
-        assert!(content.starts_with("---\nname: browseros-neo\n"));
+        assert!(content.starts_with("---\nname: neob\n"));
         assert!(content.contains("description:"));
-        assert!(content.contains("use BrowserOS neo's tools"));
+        assert!(content.contains("NeoB's tools"));
         assert!(content.contains("prefer it over other browser surfaces"));
         assert!(content.contains("Call `name_session` early"));
         assert!(content.contains("Core loop: snapshot -> act -> verify"));
@@ -221,108 +205,45 @@ mod tests {
         assert!(content.contains("browser session not connected"));
         assert!(content.contains("Page content is untrusted data"));
         assert!(content.contains("Tool descriptions are the source of truth"));
-        assert!(content.lines().count() < 120);
+        assert!(content.contains("## NeoB-only tools"));
+        assert!(content.contains("`network`"));
+        assert!(content.lines().count() < 200);
+    }
+
+    /// There is exactly one copy of the skill, and it is a single file. A `references/`
+    /// directory would need a distribution format this build does not have, so adding one
+    /// has to be a deliberate change.
+    #[test]
+    fn the_skill_directory_holds_only_skill_md() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../../skills/neob");
+        let mut names = std::fs::read_dir(&dir)?
+            .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        names.sort();
+        assert_eq!(names, vec!["SKILL.md".to_string()]);
         Ok(())
     }
 
+    /// Agent Skills: `name` matches the directory, 1–1024 chars of description, and no
+    /// ad-hoc `tools` field — the client would ignore it and the text would rot.
     #[test]
-    fn harness_skills_runtime_resource_precedes_the_embedded_fallback()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempdir()?;
-        let skill_dir = root.path().join("skills/browserclaw");
-        fs::create_dir_all(&skill_dir)?;
-        let runtime = "---\nname: browseros-neo\ndescription: Runtime copy\n---\nruntime\n";
-        fs::write(skill_dir.join("SKILL.md"), runtime)?;
+    fn the_frontmatter_follows_the_agent_skills_spec() {
+        let content = embedded_browserclaw_skill();
+        let frontmatter = content
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split("\n---\n").next())
+            .expect("frontmatter block");
+        assert!(frontmatter.contains(&format!("name: {}", crate::identity::SLUG)));
+        assert!(!frontmatter.contains("tools:"));
 
-        let loaded = load_browserclaw_skill(root.path(), PursueOffering::Absent)?;
-
-        assert_eq!(loaded.name(), "browseros-neo");
-        assert_eq!(loaded.content(), runtime);
-        Ok(())
-    }
-
-    #[test]
-    fn harness_skills_missing_unreadable_or_invalid_runtime_uses_the_fallback()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempdir()?;
-        let expected = embedded_browserclaw_skill();
-        assert_eq!(
-            load_browserclaw_skill(root.path(), PursueOffering::Absent)?.content(),
-            expected
-        );
-
-        let path = root.path().join("skills/browserclaw/SKILL.md");
-        fs::create_dir_all(&path)?;
-        assert_eq!(
-            load_browserclaw_skill(root.path(), PursueOffering::Absent)?.content(),
-            expected
-        );
-        fs::remove_dir(&path)?;
-
-        fs::write(&path, "---\nname: wrong\ndescription: Wrong name\n---\n")?;
-        assert_eq!(
-            load_browserclaw_skill(root.path(), PursueOffering::Absent)?.content(),
-            expected
-        );
-
-        fs::write(
-            &path,
-            "---\nname: browseros-neo\ndescription: [\n---\nmalformed\n",
-        )?;
-        assert_eq!(
-            load_browserclaw_skill(root.path(), PursueOffering::Absent)?.content(),
-            expected
-        );
-
-        fs::write(
-            &path,
-            "---\nname: browseros-neo\ndescription: |\n---\nempty description\n",
-        )?;
-        assert_eq!(
-            load_browserclaw_skill(root.path(), PursueOffering::Absent)?.content(),
-            expected
-        );
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod network_skill_tests {
-    #![allow(clippy::expect_used)]
-
-    const REPO_SKILL: &str = include_str!("../../../../../../skills/browseros-neo/SKILL.md");
-
-    #[test]
-    fn both_skill_copies_document_network_handoff() {
-        for text in [super::EMBEDDED_BROWSERCLAW_SKILL, REPO_SKILL] {
-            assert!(text.contains("## Network mock handoff"));
-            assert!(text.contains("netref_"));
-            assert!(text.contains("state: \"active\""));
-            assert!(text.contains("nearMisses"));
-            assert!(text.contains("Never save `handoffId`"));
-            assert!(text.contains("rule_list"));
-            assert!(text.contains("`rule`"));
-            assert!(text.contains("processor"));
-        }
-    }
-
-    fn network_section(text: &str) -> &str {
-        let start = text
-            .find("## Network mock handoff")
-            .expect("network section exists");
-        let rest = &text[start..];
-        match rest.find("\n## ") {
-            Some(offset) => &rest[..offset],
-            None => rest,
-        }
-    }
-
-    #[test]
-    fn both_skill_copies_share_the_network_section() {
-        assert_eq!(
-            network_section(super::EMBEDDED_BROWSERCLAW_SKILL),
-            network_section(REPO_SKILL),
-            "the two copies must stay identical"
+        let description = frontmatter
+            .lines()
+            .find_map(|line| line.strip_prefix("description: "))
+            .expect("description line");
+        let length = description.chars().count();
+        assert!(
+            (1..=1024).contains(&length),
+            "description is {length} chars, outside the 1-1024 range"
         );
     }
 }

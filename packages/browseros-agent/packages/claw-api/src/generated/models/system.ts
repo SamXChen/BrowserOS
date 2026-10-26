@@ -39,6 +39,50 @@ export interface BrowserLink {
 }
 
 /**
+ * What this binary is, compared against the artifact manifest shipped beside it. The server reports a mismatch instead of refusing to start: a running process that knows it does not match its manifest is easier to diagnose than a port that never opens.
+ * @export
+ * @interface BuildInfo
+ */
+export interface BuildInfo {
+    /**
+     * Cargo package version of the running binary.
+     * @type {string}
+     * @memberof BuildInfo
+     */
+    version: string;
+    /**
+     * Git revision recorded by the build, when the manifest carries one. Not a build identifier on its own.
+     * @type {string}
+     * @memberof BuildInfo
+     */
+    releaseSha?: string;
+    /**
+     * SHA-256 of the running executable, absent while `integrity` is `pending`.
+     * @type {string}
+     * @memberof BuildInfo
+     */
+    binarySha256?: string;
+    /**
+     * `pending` while the hash is still being computed, `ok` when the manifest lists this exact binary, `mismatch` when it lists a different one, `absent` when there is no manifest to compare against.
+     * @type {BuildInfoIntegrityEnum}
+     * @memberof BuildInfo
+     */
+    integrity: BuildInfoIntegrityEnum;
+}
+
+
+/**
+ * @export
+ */
+export const BuildInfoIntegrityEnum = {
+    Pending: 'pending',
+    Ok: 'ok',
+    Mismatch: 'mismatch',
+    Absent: 'absent'
+} as const;
+export type BuildInfoIntegrityEnum = typeof BuildInfoIntegrityEnum[keyof typeof BuildInfoIntegrityEnum];
+
+/**
  *
  * @export
  * @interface HealthResponse
@@ -56,6 +100,12 @@ export interface HealthResponse {
      * @memberof HealthResponse
      */
     browser?: BrowserLink;
+    /**
+     *
+     * @type {BuildInfo}
+     * @memberof HealthResponse
+     */
+    build?: BuildInfo;
 }
 
 

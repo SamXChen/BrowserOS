@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Server supervision lives here so a crash is recovered in seconds: `launchd`
+	     restarts the process directly, and the launcher only makes sure the browser is
+	     running. -->
+	<key>Label</key>
+	<string>__LABEL__</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__STATE_ROOT__/server/current/resources/bin/browseros-claw-server</string>
+		<string>--config</string>
+		<string>__STATE__/sidecar.json</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>StandardOutPath</key>
+	<string>__STATE__/server.stderr.log</string>
+	<key>StandardErrorPath</key>
+	<string>__STATE__/server.stderr.log</string>
+</dict>
+</plist>

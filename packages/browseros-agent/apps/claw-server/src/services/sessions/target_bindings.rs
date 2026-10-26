@@ -49,7 +49,7 @@ impl Record {
     fn require_live(&self) -> AppResult<()> {
         if self.stopped {
             return Err(AppError::Internal(
-                "BrowserOS neo session was stopped and will not resume".into(),
+                "NeoB session was stopped and will not resume".into(),
             ));
         }
         Ok(())

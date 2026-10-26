@@ -166,8 +166,8 @@ function CreateForm({ onClose }: { onClose: () => void }) {
                 </div>
               </FormControl>
               <FormDescription>
-                Saved as /{field.value ? neoName(field.value) : 'neo-<name>'} so
-                you can find it with /neo in your agent. Lowercase letters,
+                Saved as /{field.value ? neoName(field.value) : 'neob-<name>'}{' '}
+                so you can find it with /neob in your agent. Lowercase letters,
                 digits, and hyphens.
               </FormDescription>
               <FormMessage />

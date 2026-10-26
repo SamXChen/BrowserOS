@@ -42,6 +42,12 @@ cp "$ICON" "$APP/Contents/Resources/app.icns"
 # CFBundleIconFile=app.icns（已用 NSWorkspace 解析验证）。
 $PB -c "Delete :CFBundleIconName" "$APP/Contents/Info.plist" 2>/dev/null || true
 
+# chrome:// 内置页（下载记录、版本页等）的 logo 编译在 chrome_*_percent.pak 里，
+# 光换 Contents/Resources/app.icns 不会改变它们。patch-internal-logo.py 会把同一份
+# AppIcon.icns 生成 32px PNG，同时覆盖散文件和 pak 内的同尺寸条目。
+echo "==> 换内置页 logo（product_logo_32.png + chrome_*_percent.pak）"
+python3 patch-internal-logo.py "$APP" "$ICON" || echo "    内置页 logo 未替换（不影响打包）" >&2
+
 echo "==> 内嵌启动脚本（设为 CFBundleExecutable，双击即注入参数）"
 cp "src/$APP_NAME" "$APP/Contents/MacOS/$LAUNCHER"
 chmod +x "$APP/Contents/MacOS/$LAUNCHER"

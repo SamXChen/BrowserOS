@@ -248,6 +248,8 @@ components:
       $ref: ./schemas/system.yaml#/HealthResponse
     BrowserLink:
       $ref: ./schemas/system.yaml#/BrowserLink
+    BuildInfo:
+      $ref: ./schemas/system.yaml#/BuildInfo
     ShutdownResponse:
       $ref: ./schemas/system.yaml#/ShutdownResponse
     SystemDiagnostics:

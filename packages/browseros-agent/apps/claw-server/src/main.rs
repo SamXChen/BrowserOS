@@ -72,6 +72,9 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     record_startup(&logs_dir, "initialized", None);
+    // Compute the build identity off the critical path: the port must open first, and a
+    // mismatch is information rather than a reason to refuse to start.
+    spawn_build_identity(&state);
     let mut runtime = AppRuntime::start(state);
     let run_result = run(&mut runtime, config, stdio_mode).await;
     let shutdown_result = runtime.shutdown().await;
@@ -351,6 +354,49 @@ async fn wait_for_shutdown_signal() {
 #[cfg(not(unix))]
 async fn wait_for_shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+/// Hashes the running executable against its artifact manifest, off the startup path.
+fn spawn_build_identity(state: &claw_server::app::AppState) {
+    let slot = state.build_info.clone();
+    tokio::spawn(async move {
+        let computed = tokio::task::spawn_blocking(|| {
+            let exe = match std::env::current_exe() {
+                Ok(exe) => exe,
+                Err(error) => {
+                    return claw_server::services::build_info::BuildInfo::unknown(format!(
+                        "cannot resolve the running executable: {error}"
+                    ));
+                }
+            };
+            match claw_server::services::build_info::manifest_path_for(&exe) {
+                Some(manifest) => {
+                    claw_server::services::build_info::evaluate(&exe, &manifest)
+                }
+                None => claw_server::services::build_info::BuildInfo::unknown(
+                    "the executable is not inside a release directory",
+                ),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            claw_server::services::build_info::BuildInfo::unknown("build identity task failed")
+        });
+        match computed.integrity {
+            claw_server::services::build_info::Integrity::Ok => info!(
+                version = %computed.version,
+                sha256 = computed.binary_sha256.as_deref().unwrap_or(""),
+                "running binary matches its artifact manifest"
+            ),
+            other => warn!(
+                version = %computed.version,
+                integrity = other.as_str(),
+                detail = computed.detail.as_deref().unwrap_or(""),
+                "running binary does not match its artifact manifest"
+            ),
+        }
+        let _ = slot.set(computed);
+    });
 }
 
 #[cfg(test)]

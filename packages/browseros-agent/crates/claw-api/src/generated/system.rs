@@ -40,6 +40,57 @@ impl BrowserLink {
     }
 }
 
+/// BuildInfo : What this binary is, compared against the artifact manifest shipped beside it. The server reports a mismatch instead of refusing to start: a running process that knows it does not match its manifest is easier to diagnose than a port that never opens.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BuildInfo {
+    /// Cargo package version of the running binary.
+    #[serde(rename = "version")]
+    pub version: String,
+    /// Git revision recorded by the build, when the manifest carries one. Not a build identifier on its own.
+    #[serde(rename = "releaseSha", skip_serializing_if = "Option::is_none")]
+    pub release_sha: Option<String>,
+    /// SHA-256 of the running executable, absent while `integrity` is `pending`.
+    #[serde(rename = "binarySha256", skip_serializing_if = "Option::is_none")]
+    pub binary_sha256: Option<String>,
+    /// `pending` while the hash is still being computed, `ok` when the manifest lists this exact binary, `mismatch` when it lists a different one, `absent` when there is no manifest to compare against.
+    #[serde(rename = "integrity")]
+    pub integrity: BuildInfoIntegrity,
+}
+
+impl BuildInfo {
+    /// What this binary is, compared against the artifact manifest shipped beside it. The server reports a mismatch instead of refusing to start: a running process that knows it does not match its manifest is easier to diagnose than a port that never opens.
+    pub fn new(version: String, integrity: BuildInfoIntegrity) -> BuildInfo {
+        BuildInfo {
+            version,
+            release_sha: None,
+            binary_sha256: None,
+            integrity,
+        }
+    }
+}
+/// `pending` while the hash is still being computed, `ok` when the manifest lists this exact binary, `mismatch` when it lists a different one, `absent` when there is no manifest to compare against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum BuildInfoIntegrity {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "ok")]
+    Ok,
+    #[serde(rename = "mismatch")]
+    Mismatch,
+    #[serde(rename = "absent")]
+    Absent,
+}
+
+impl Default for BuildInfoIntegrity {
+    fn default() -> BuildInfoIntegrity {
+        Self::Pending
+    }
+}
+
+pub mod build_info {
+    pub use super::BuildInfoIntegrity as Integrity;
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HealthResponse {
     /// Reports only that this process is serving. It stays `ok` while the browser link is down, because the supervisor restarts the server on a non-200 and a restart cannot restore a link the operating system tore down. Read `browser` for whether agent tools can actually run.
@@ -47,6 +98,8 @@ pub struct HealthResponse {
     pub status: HealthResponseStatus,
     #[serde(rename = "browser", skip_serializing_if = "Option::is_none")]
     pub browser: Option<Box<models::BrowserLink>>,
+    #[serde(rename = "build", skip_serializing_if = "Option::is_none")]
+    pub build: Option<Box<models::BuildInfo>>,
 }
 
 impl HealthResponse {
@@ -54,6 +107,7 @@ impl HealthResponse {
         HealthResponse {
             status,
             browser: None,
+            build: None,
         }
     }
 }

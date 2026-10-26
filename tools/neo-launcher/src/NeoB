@@ -2,7 +2,7 @@
 # NeoB 启动器（内嵌在 NeoB.app/Contents/MacOS/，作为 CFBundleExecutable）
 #
 # 双击 app 时执行本脚本：
-#   1) 确保自建 claw-server 在跑（固定端口，避开官方默认端口）
+#   1) 确保 claw-server 的 LaunchAgent 已加载（server 本体由 launchd 监管）
 #   2) exec 同目录的真实二进制 "BrowserOS neo"，注入本地 cockpit 与 server 端口
 #
 # 配置来自 Contents/Resources/config.env（可改）
@@ -27,10 +27,8 @@ fi
 NEO_BIN="$HERE/$NEO_EXECUTABLE"
 
 AGENT_ROOT="$REPO_ROOT/packages/browseros-agent"
-SERVER_DIR="$AGENT_ROOT/dist/prod/claw-server/darwin-arm64"
-SERVER_BIN="$SERVER_DIR/resources/bin/browseros-claw-server"
-SERVER_RES="$SERVER_DIR/resources"
 EXT_DIR="$AGENT_ROOT/apps/claw-app/dist/chrome-mv3"
+SERVER_LABEL="${NEOB_SERVER_LABEL:-com.sam.neob.server}"
 
 mkdir -p "$PROFILE_DIR" "$STATE_DIR"
 
@@ -39,25 +37,20 @@ if [ ! -x "$NEO_BIN" ]; then
   exit 1
 fi
 
-# ---- sidecar 配置（每次启动重写）----
-cat > "$STATE_DIR/sidecar.json" <<EOF
-{
-  "ports": { "server": $SERVER_PORT, "cdp": $CDP_PORT, "proxy": $SERVER_PORT },
-  "directories": { "resources": "$SERVER_RES", "execution": "$STATE_DIR" },
-  "flags": { "allow_remote_in_mcp": false },
-  "instance": { "browseros_version": "$NATIVE_VERSION" }
-}
-EOF
-
-# ---- 1) 自建 claw-server ----
-if curl -s -m 2 "http://127.0.0.1:$SERVER_PORT/system/health" >/dev/null 2>&1; then
-  echo "claw-server 已在 $SERVER_PORT 运行"
-elif [ -x "$SERVER_BIN" ]; then
-  echo "启动自建 claw-server (server=$SERVER_PORT cdp=$CDP_PORT)"
-  nohup "$SERVER_BIN" --config "$STATE_DIR/sidecar.json" \
-    >> "$STATE_DIR/server.log" 2>&1 &
-else
-  echo "警告：未找到自建 server（$SERVER_BIN），将以无 MCP 模式启动" >&2
+# ---- 1) server 由 launchd 监管 ----
+# sidecar 由 deploy.sh 写出并随 release 一起切换；launcher 不再改它，也不再 nohup，
+# 这样拉起的进程总是与 current 指向的 release 一致。
+if [ -f "$STATE_DIR/deploy.lock" ]; then
+  echo "部署进行中，跳过 server 检查" >&2
+elif ! launchctl print "gui/$(id -u)/$SERVER_LABEL" >/dev/null 2>&1; then
+  PLIST="$HOME/Library/LaunchAgents/$SERVER_LABEL.plist"
+  if [ -f "$PLIST" ]; then
+    echo "加载 server LaunchAgent：$SERVER_LABEL"
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null \
+      || launchctl kickstart -k "gui/$(id -u)/$SERVER_LABEL" 2>/dev/null || true
+  else
+    echo "警告：未安装 server LaunchAgent（$PLIST），MCP 将不可用；运行 tools/neo-launcher/deploy.sh" >&2
+  fi
 fi
 
 # ---- 2) 浏览器参数 ----

@@ -353,11 +353,12 @@ fn classify(relative: &Path) -> Result<Layer, String> {
         [file]
             if matches!(
                 file.as_str(),
-                "clock.rs" | "config.rs" | "error.rs" | "ids.rs" | "lib.rs" | "storage.rs"
+                "clock.rs" | "config.rs" | "error.rs" | "identity" | "ids.rs" | "lib.rs" | "storage.rs"
             ) =>
         {
             Ok(Layer::Support)
         }
+        [module, _] if module == "migrate" => Ok(Layer::Composition),
         _ => Err("file is outside the approved architecture".to_string()),
     }
 }

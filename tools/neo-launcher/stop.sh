@@ -11,3 +11,9 @@ pkill -f "user-data-dir=$PROFILE_DIR" 2>/dev/null && echo "已停止" || echo "�
 
 echo "==> 停 claw-server（仅 NeoB sidecar）"
 pkill -f "$STATE_DIR/sidecar.json" 2>/dev/null && echo "已停止" || echo "未在运行"
+
+if [ "${1:-}" = "--all" ]; then
+  echo "==> 卸载 server LaunchAgent"
+  launchctl bootout "gui/$(id -u)/${NEOB_SERVER_LABEL:-com.sam.neob.server}" 2>/dev/null \
+    && echo "已卸载" || echo "未加载"
+fi

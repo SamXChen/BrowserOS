@@ -1252,6 +1252,7 @@ export interface components {
        */
       status: 'ok'
       browser?: components['schemas']['BrowserLink']
+      build?: components['schemas']['BuildInfo']
     }
     /** @description The server's live connection to the browser it drives. */
     BrowserLink: {
@@ -1263,6 +1264,20 @@ export interface components {
       downForMs: number | null
       /** @description Why the link was last lost, when known. */
       lastError: string | null
+    }
+    /** @description What this binary is, compared against the artifact manifest shipped beside it. The server reports a mismatch instead of refusing to start: a running process that knows it does not match its manifest is easier to diagnose than a port that never opens. */
+    BuildInfo: {
+      /** @description Cargo package version of the running binary. */
+      version: string
+      /** @description Git revision recorded by the build, when the manifest carries one. Not a build identifier on its own. */
+      releaseSha?: string
+      /** @description SHA-256 of the running executable, absent while `integrity` is `pending`. */
+      binarySha256?: string
+      /**
+       * @description `pending` while the hash is still being computed, `ok` when the manifest lists this exact binary, `mismatch` when it lists a different one, `absent` when there is no manifest to compare against.
+       * @enum {string}
+       */
+      integrity: 'pending' | 'ok' | 'mismatch' | 'absent'
     }
     ShutdownResponse: {
       /** @enum {string} */

@@ -89,12 +89,12 @@ async fn check_nested_profile_detection(home: PathBuf) -> anyhow::Result<()> {
         home.join("state/mcp"),
         home.join("state/skills"),
         home.clone(),
-        SkillSpec::new("browseros-neo", "nested profile instructions")?,
+        SkillSpec::new("neob", "nested profile instructions")?,
         Arc::new(NoopAnalyticsSink),
     );
     service.run_skill_reconciliation().await?;
     assert!(
-        home.join(".claude/profiles/work/skills/browseros-neo/SKILL.md")
+        home.join(".claude/profiles/work/skills/neob/SKILL.md")
             .is_file()
     );
     assert!(!is_installed(&[AgentId::ClaudeCode])?[&AgentId::ClaudeCode]);
@@ -128,7 +128,7 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
                 state.join("mcp"),
                 state.join("skills"),
                 home.clone(),
-                SkillSpec::new("browseros-neo", "independent instructions")?,
+                SkillSpec::new("neob", "independent instructions")?,
                 Arc::new(NoopAnalyticsSink),
             );
             fs::create_dir_all(home.join(".cursor"))?;
@@ -142,7 +142,7 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
             service
                 .connect_browseros(Harness::ClaudeCode, "http://127.0.0.1:9200/mcp")
                 .await?;
-            let native = home.join(".cursor/skills/browseros-neo/SKILL.md");
+            let native = home.join(".cursor/skills/neob/SKILL.md");
             let native_before = fs::read(&native)?;
             let skill_manifest_path = state.join("skills/skills.json");
             let skill_manifest_before = fs::read(&skill_manifest_path)?;
@@ -150,8 +150,8 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
             let manifest_before = fs::read(&manifest_path)?;
             fs::write(&manifest_path, "{ broken MCP manifest")?;
             for root in [
-                ".agents/skills/browseros-neo",
-                ".claude/skills/browseros-neo",
+                ".agents/skills/neob",
+                ".claude/skills/neob",
             ] {
                 fs::remove_dir_all(home.join(root))?;
             }
@@ -164,8 +164,8 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
             assert_eq!(fs::read(&skill_manifest_path)?, skill_manifest_before);
             assert_eq!(fs::read_to_string(&manifest_path)?, "{ broken MCP manifest");
             for root in [
-                ".agents/skills/browseros-neo/SKILL.md",
-                ".claude/skills/browseros-neo/SKILL.md",
+                ".agents/skills/neob/SKILL.md",
+                ".claude/skills/neob/SKILL.md",
             ] {
                 assert_eq!(
                     fs::read_to_string(home.join(root))?,
@@ -176,7 +176,7 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
             service.disconnect_browseros(Harness::Cursor).await?;
             service.run_skill_reconciliation().await?;
             assert!(!native.exists());
-            assert!(home.join(".agents/skills/browseros-neo/SKILL.md").exists());
+            assert!(home.join(".agents/skills/neob/SKILL.md").exists());
             Ok(())
         },
     )
@@ -188,13 +188,14 @@ async fn provision_fresh_home(home: PathBuf) -> anyhow::Result<()> {
         state.join("mcp-manager"),
         state.join("harness-integrations"),
         home.clone(),
-        SkillSpec::new("browseros-neo", "managed instructions v1\n")?,
+        SkillSpec::new("neob", "managed instructions v1\n")?,
         Arc::new(NoopAnalyticsSink),
     );
     let result = service.run_skill_reconciliation().await?;
     for relative in [
-        ".agents/skills/browseros-neo/SKILL.md",
-        ".claude/skills/browseros-neo/SKILL.md",
+        ".agents/skills/neob/SKILL.md",
+        ".claude/skills/neob/SKILL.md",
+        ".codebuddy/skills/neob/SKILL.md",
     ] {
         anyhow::ensure!(
             home.join(relative).is_file(),
@@ -205,7 +206,7 @@ async fn provision_fresh_home(home: PathBuf) -> anyhow::Result<()> {
             "managed instructions v1\n"
         );
     }
-    assert_eq!(result.installed, 2);
+    assert_eq!(result.installed, 3);
     assert!(result.warnings.is_empty());
     assert!(!home.join(".codex").exists());
     assert!(!home.join(".claude.json").exists());
@@ -217,7 +218,7 @@ async fn provision_fresh_home(home: PathBuf) -> anyhow::Result<()> {
     );
     // Both the connection list's probe and the config writer must reject this
     // false signal, including a native OpenCode skill root from another installer.
-    fs::create_dir_all(home.join(".config/opencode/skills/browseros-neo"))?;
+    fs::create_dir_all(home.join(".config/opencode/skills/neob"))?;
     assert!(!is_installed(&[AgentId::OpenCode])?[&AgentId::OpenCode]);
     for harness in [Harness::ClaudeCode, Harness::OpenCode] {
         assert!(
@@ -247,25 +248,25 @@ async fn provision_fresh_home(home: PathBuf) -> anyhow::Result<()> {
             .installed
     );
     service.run_skill_reconciliation().await?;
-    assert!(!fs::read_to_string(home.join(".claude.json"))?.contains("browseros-neo"));
-    assert!(!home.join(".claude/skills/browseros-neo/SKILL.md").exists());
+    assert!(!fs::read_to_string(home.join(".claude.json"))?.contains("neob"));
+    assert!(!home.join(".claude/skills/neob/SKILL.md").exists());
     let reopened = HarnessService::new_with_managed_skill(
         state.join("mcp-manager"),
         state.join("harness-integrations"),
         home.clone(),
-        SkillSpec::new("browseros-neo", "managed instructions v2\n")?,
+        SkillSpec::new("neob", "managed instructions v2\n")?,
         Arc::new(NoopAnalyticsSink),
     );
     reopened.run_skill_reconciliation().await?;
-    assert!(!home.join(".claude/skills/browseros-neo/SKILL.md").exists());
-    assert!(!fs::read_to_string(home.join(".claude.json"))?.contains("browseros-neo"));
+    assert!(!home.join(".claude/skills/neob/SKILL.md").exists());
+    assert!(!fs::read_to_string(home.join(".claude.json"))?.contains("neob"));
     assert!(
         reopened
             .connect_browseros(Harness::ClaudeCode, "http://127.0.0.1:9200/mcp")
             .await?
             .installed
     );
-    assert!(home.join(".claude/skills/browseros-neo/SKILL.md").exists());
+    assert!(home.join(".claude/skills/neob/SKILL.md").exists());
     Ok(())
 }
 
@@ -280,7 +281,7 @@ fn background_worker_repairs_without_requests_and_stops_at_shutdown() -> anyhow:
                 home.join("state/mcp"),
                 home.join("state/skills"),
                 home.clone(),
-                SkillSpec::new("browseros-neo", "background instructions\n")?,
+                SkillSpec::new("neob", "background instructions\n")?,
                 Arc::new(NoopAnalyticsSink),
             ));
             let (stop, stopped) = tokio::sync::oneshot::channel();
@@ -292,8 +293,8 @@ fn background_worker_repairs_without_requests_and_stops_at_shutdown() -> anyhow:
                     })
                     .await;
             });
-            let shared = home.join(".agents/skills/browseros-neo/SKILL.md");
-            let claude = home.join(".claude/skills/browseros-neo/SKILL.md");
+            let shared = home.join(".agents/skills/neob/SKILL.md");
+            let claude = home.join(".claude/skills/neob/SKILL.md");
             wait_for_skill(&shared).await?;
             wait_for_skill(&claude).await?;
             // Finish the in-flight pass before changing its result; this crosses the
@@ -311,7 +312,7 @@ fn background_worker_repairs_without_requests_and_stops_at_shutdown() -> anyhow:
             service
                 .run_reconciliation("http://127.0.0.1:9200/mcp")
                 .await?;
-            assert!(!fs::read_to_string(&codex)?.contains("browseros-neo"));
+            assert!(!fs::read_to_string(&codex)?.contains("neob"));
             assert_eq!(fs::read_to_string(&shared)?, "background instructions\n");
             stop.send(())
                 .map_err(|()| anyhow::anyhow!("worker stopped before shutdown"))?;
@@ -320,7 +321,7 @@ fn background_worker_repairs_without_requests_and_stops_at_shutdown() -> anyhow:
             tokio::time::advance(Duration::from_secs(120)).await;
             assert!(!shared.exists(), "shutdown must stop periodic repairs");
             assert!(!home.join(".claude.json").exists());
-            assert!(!fs::read_to_string(&codex)?.contains("browseros-neo"));
+            assert!(!fs::read_to_string(&codex)?.contains("neob"));
             Ok(())
         },
     )
@@ -347,11 +348,11 @@ fn packaged_skills_replace_existing_content_and_repair_missing_files() -> anyhow
                     home.join("state/mcp"),
                     home.join("state/skills"),
                     home.clone(),
-                    SkillSpec::new("browseros-neo", content)?,
+                    SkillSpec::new("neob", content)?,
                     Arc::new(NoopAnalyticsSink),
                 ))
             };
-            let shared = home.join(".agents/skills/browseros-neo/SKILL.md");
+            let shared = home.join(".agents/skills/neob/SKILL.md");
             fs::create_dir_all(
                 shared
                     .parent()
@@ -392,7 +393,7 @@ fn reconciliation_discovers_apps_and_respects_disconnect_after_restart() -> anyh
                     home.join("state/mcp"),
                     home.join("state/skills"),
                     home.clone(),
-                    SkillSpec::new("browseros-neo", "instructions")?,
+                    SkillSpec::new("neob", "instructions")?,
                     Arc::new(NoopAnalyticsSink),
                 ))
             };
@@ -407,7 +408,7 @@ fn reconciliation_discovers_apps_and_respects_disconnect_after_restart() -> anyh
             assert!(fs::read_to_string(home.join(".codex/config.toml"))?.contains(url));
             assert!(fs::read_to_string(home.join(".cursor/mcp.json"))?.contains(url));
             service.disconnect_browseros(Harness::Codex).await?;
-            let shared = home.join(".agents/skills/browseros-neo/SKILL.md");
+            let shared = home.join(".agents/skills/neob/SKILL.md");
             assert!(shared.exists(), "disconnect must preserve shared skills");
             let shared_modified = fs::metadata(&shared)?.modified()?;
             let reopened = make()?;
@@ -415,7 +416,7 @@ fn reconciliation_discovers_apps_and_respects_disconnect_after_restart() -> anyh
                 .run_reconciliation("http://127.0.0.1:9300/mcp")
                 .await?;
             assert!(
-                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("browseros-neo")
+                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob")
             );
             assert!(fs::read_to_string(home.join(".cursor/mcp.json"))?.contains(":9300/mcp"));
             assert_eq!(fs::metadata(&shared)?.modified()?, shared_modified);
@@ -447,7 +448,7 @@ fn upgrade_preserves_old_disconnects_but_discovers_later_apps() -> anyhow::Resul
             // custom fields. A missing Codex entry on an old profile is ambiguous.
             fs::write(
                 home.join(".cursor/mcp.json"),
-                r#"{"mcpServers":{"browseros-neo":{"url":"http://127.0.0.1:9100/mcp","headers":{"X":"keep"}}}}"#,
+                r#"{"mcpServers":{"neob":{"url":"http://127.0.0.1:9100/mcp","headers":{"X":"keep"}}}}"#,
             )?;
             fs::create_dir_all(home.join("state"))?;
             fs::write(
@@ -458,14 +459,14 @@ fn upgrade_preserves_old_disconnects_but_discovers_later_apps() -> anyhow::Resul
                 home.join("state/mcp"),
                 home.join("state/skills"),
                 home.clone(),
-                SkillSpec::new("browseros-neo", "instructions")?,
+                SkillSpec::new("neob", "instructions")?,
                 Arc::new(NoopAnalyticsSink),
             );
             service
                 .run_reconciliation("http://127.0.0.1:9200/mcp")
                 .await?;
             assert!(
-                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("browseros-neo")
+                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob")
             );
             assert!(fs::read_to_string(home.join(".cursor/mcp.json"))?.contains(":9200/mcp"));
             fs::create_dir_all(home.join(".config/opencode"))?;
@@ -499,7 +500,7 @@ fn corrupt_preferences_block_automatic_writes_and_failed_connect_keeps_opt_out()
                 home.join("state/mcp"),
                 home.join("state/skills"),
                 home.clone(),
-                SkillSpec::new("browseros-neo", "instructions")?,
+                SkillSpec::new("neob", "instructions")?,
                 Arc::new(NoopAnalyticsSink),
             );
             fs::create_dir_all(home.join(".codex"))?;
@@ -516,7 +517,7 @@ fn corrupt_preferences_block_automatic_writes_and_failed_connect_keeps_opt_out()
             );
             assert_eq!(fs::read(&preferences)?, saved);
             fs::write(&preferences, "{bad")?;
-            let shared = home.join(".agents/skills/browseros-neo/SKILL.md");
+            let shared = home.join(".agents/skills/neob/SKILL.md");
             fs::remove_file(&shared)?;
             assert!(
                 service
@@ -543,14 +544,14 @@ fn upgrade_isolates_broken_app_and_disconnect_removes_unrecorded_entries() -> an
         |home| async move {
             fs::create_dir_all(home.join(".codex"))?;
             fs::write(home.join(".codex/config.toml"), "invalid [toml")?;
-            fs::create_dir_all(home.join(".cursor/skills/browseros-neo"))?;
-            let skill = home.join(".cursor/skills/browseros-neo");
+            fs::create_dir_all(home.join(".cursor/skills/neob"))?;
+            let skill = home.join(".cursor/skills/neob");
             fs::write(skill.join("SKILL.md"), "old instructions")?;
             fs::write(skill.join("notes.txt"), "keep")?;
             let cursor = home.join(".cursor/mcp.json");
             fs::write(
                 &cursor,
-                r#"{"mcpServers":{"browseros-neo":{"url":"http://127.0.0.1:9100/mcp","headers":{"X":"keep"}},"BrowserClaw":{"url":"http://127.0.0.1:9100/mcp","disabled":false},"other":{"url":"https://example.com/mcp"}}}"#,
+                r#"{"mcpServers":{"neob":{"url":"http://127.0.0.1:9100/mcp","headers":{"X":"keep"}},"BrowserClaw":{"url":"http://127.0.0.1:9100/mcp","disabled":false},"other":{"url":"https://example.com/mcp"}}}"#,
             )?;
             fs::create_dir_all(home.join("state"))?;
             fs::write(
@@ -561,7 +562,7 @@ fn upgrade_isolates_broken_app_and_disconnect_removes_unrecorded_entries() -> an
                 home.join("state/mcp"),
                 home.join("state/skills"),
                 home.clone(),
-                SkillSpec::new("browseros-neo", "instructions")?,
+                SkillSpec::new("neob", "instructions")?,
                 Arc::new(NoopAnalyticsSink),
             );
             // Explicit Disconnect before the first maintenance pass must work without
@@ -569,7 +570,10 @@ fn upgrade_isolates_broken_app_and_disconnect_removes_unrecorded_entries() -> an
             let state = service.disconnect_browseros(Harness::Cursor).await?;
             assert!(!state.installed, "{}", state.message);
             let raw = fs::read_to_string(&cursor)?;
-            assert!(!raw.contains("browseros-neo") && !raw.contains("BrowserClaw"));
+            // Only the entry NeoB owns is removed. `BrowserClaw` is another product's
+            // name and stays untouched.
+            assert!(!raw.contains("neob"));
+            assert!(raw.contains("BrowserClaw"));
             assert!(raw.contains("https://example.com/mcp"));
             assert!(!skill.join("SKILL.md").exists());
             assert_eq!(fs::read_to_string(skill.join("notes.txt"))?, "keep");
@@ -581,7 +585,44 @@ fn upgrade_isolates_broken_app_and_disconnect_removes_unrecorded_entries() -> an
                 fs::read_to_string(home.join(".codex/config.toml"))?,
                 "invalid [toml"
             );
-            assert!(home.join(".agents/skills/browseros-neo/SKILL.md").exists());
+            assert!(home.join(".agents/skills/neob/SKILL.md").exists());
+            Ok(())
+        },
+    )
+}
+
+/// Saved skills go where the product skill goes, including the client directory
+/// outside the MCP catalog, and uninstall takes them back out.
+#[test]
+fn saves_and_removes_a_skill_in_every_provisioned_root() -> anyhow::Result<()> {
+    isolated(
+        "saves_and_removes_a_skill_in_every_provisioned_root",
+        None,
+        |home| async move {
+            fs::create_dir_all(home.join(".claude"))?;
+            let service = HarnessService::new_with_managed_skill(
+                home.join("state/mcp"),
+                home.join("state/skills"),
+                home.clone(),
+                SkillSpec::new("neob", "product skill")?,
+                Arc::new(NoopAnalyticsSink),
+            );
+
+            let name = "neob-weekly-report";
+            service
+                .install_skill(SkillSpec::new(name, "---\nname: neob-weekly-report\ndescription: x\n---\n")?)
+                .await?;
+            for root in [".agents/skills", ".claude/skills", ".codebuddy/skills"] {
+                let path = home.join(root).join(name).join("SKILL.md");
+                assert!(path.exists(), "missing {root}/{name}");
+                let marker = fs::read_to_string(home.join(root).join(name).join(".browserclaw-managed.json"))?;
+                assert!(marker.contains("\"managedBy\": \"neob\""), "marker in {root}: {marker}");
+            }
+
+            service.uninstall_skill(name).await?;
+            for root in [".agents/skills", ".claude/skills", ".codebuddy/skills"] {
+                assert!(!home.join(root).join(name).exists(), "{root}/{name} survived uninstall");
+            }
             Ok(())
         },
     )

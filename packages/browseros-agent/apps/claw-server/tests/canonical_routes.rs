@@ -664,7 +664,10 @@ async fn canonical_control_settings_and_empty_lists() -> anyhow::Result<()> {
         json_body(&bytes)?,
         json!({
             "status": "ok",
-            "browser": { "connected": false, "downForMs": null, "lastError": null }
+            "browser": { "connected": false, "downForMs": null, "lastError": null },
+            // The build identity is computed in the background; a freshly built test app
+            // has not finished hashing itself yet.
+            "build": { "version": env!("CARGO_PKG_VERSION"), "integrity": "pending" }
         })
     );
 

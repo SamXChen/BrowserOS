@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router'
 import * as _connectionsHooks from '@/modules/api/connections.hooks'
 import { CommandBlock } from './CommandBlock'
-import { SKILL_INSTALL_COMMAND, SKILLS_PACK } from './install-guide.data'
+import { SKILL_INSTALL_COMMAND, SKILL_NAME } from './install-guide.data'
 
 const mcpBrowserosConnections = [
   {
@@ -245,9 +245,9 @@ describe('Mcp (editorial)', () => {
   it('scopes the skill install command to the one user-facing skill', () => {
     // `npx skills add <pack>` with no flag pulls in five skills, four of
     // them internal to this repo. Verified by running both forms.
-    expect(SKILL_INSTALL_COMMAND).toContain('--skill browseros-neo')
+    expect(SKILL_INSTALL_COMMAND).toContain('skills/neob')
     expect(SKILL_INSTALL_COMMAND).toBe(
-      `npx skills add ${SKILLS_PACK} --skill browseros-neo`,
+      `cp -R <repo>/skills/${SKILL_NAME} ~/.agents/skills/`,
     )
   })
 

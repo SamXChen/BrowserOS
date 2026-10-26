@@ -27,7 +27,13 @@ pub struct SkillReconciler {
     workspace_dir: PathBuf,
     provisioned_roots: Vec<PathBuf>,
     owned_name: Option<String>,
+    /// Written into every ownership marker and required on read. The caller supplies it
+    /// so this crate never hardcodes a product name.
+    owner: String,
 }
+
+/// Owner used by this crate's own tests; production callers must set their own.
+const TEST_OWNER: &str = "browserclaw";
 
 impl SkillReconciler {
     #[must_use]
@@ -36,7 +42,15 @@ impl SkillReconciler {
             workspace_dir: workspace_dir.into(),
             provisioned_roots: Vec::new(),
             owned_name: None,
+            owner: TEST_OWNER.to_string(),
         }
+    }
+
+    /// Sets the owner recorded in, and required from, ownership markers.
+    #[must_use]
+    pub fn with_owner(mut self, owner: impl Into<String>) -> Self {
+        self.owner = owner.into();
+        self
     }
 
     /// Configures skill roots to provision before any consuming application is installed.
@@ -118,7 +132,7 @@ impl SkillReconciler {
             let controlled = read_marker(&target)
                 .ok()
                 .flatten()
-                .is_some_and(|marker| marker.controls(legacy_name));
+                .is_some_and(|marker| marker.controls(&self.owner, legacy_name));
             if !controlled {
                 continue;
             }
@@ -146,7 +160,7 @@ impl SkillReconciler {
         spec: &SkillSpec,
         consumers: Option<&BTreeSet<AgentId>>,
         environment: &SkillEnvironment,
-        mut replace: impl FnMut(&Path, &SkillSpec, &str) -> std::io::Result<()>,
+        mut replace: impl FnMut(&Path, &SkillSpec, &str, &str) -> std::io::Result<()>,
     ) -> Result<SkillReconcileOutcome, Error> {
         self.reconcile_with_identity(
             spec,
@@ -163,7 +177,7 @@ impl SkillReconciler {
         consumers: Option<&BTreeSet<AgentId>>,
         environment: &SkillEnvironment,
         mut identity: impl FnMut(&Path) -> Result<PathBuf, Error>,
-        mut replace: impl FnMut(&Path, &SkillSpec, &str) -> std::io::Result<()>,
+        mut replace: impl FnMut(&Path, &SkillSpec, &str, &str) -> std::io::Result<()>,
     ) -> Result<SkillReconcileOutcome, Error> {
         let owns_name = self.owned_name.as_deref() == Some(spec.name.as_str());
         let original = read_manifest(&self.workspace_dir)?;
@@ -215,14 +229,14 @@ impl SkillReconciler {
             };
             let marker_controls = marker
                 .as_ref()
-                .is_some_and(|marker| marker.controls(&spec.name));
+                .is_some_and(|marker| marker.controls(&self.owner, &spec.name));
             if metadata.is_some() && !owns_name && !record_controls && !marker_controls {
                 preserve_original_records.insert(target.clone());
                 outcome.warnings.push(SkillWarning {
                     target: target.clone(),
                     message: format!(
-                        "Existing {} directory is not managed by BrowserOS neo; left unchanged",
-                        spec.name
+                        "Existing {} directory is not managed by {}; left unchanged",
+                        spec.name, self.owner
                     ),
                 });
                 continue;
@@ -251,7 +265,7 @@ impl SkillReconciler {
                 None
             };
             let marker_matches = marker.as_ref().is_some_and(|marker| {
-                marker.controls(&spec.name) && marker.content_hash == desired_hash
+                marker.controls(&self.owner, &spec.name) && marker.content_hash == desired_hash
             });
             let needs_replace = metadata.is_none()
                 || actual_hash.as_deref() != Some(desired_hash.as_str())
@@ -262,9 +276,9 @@ impl SkillReconciler {
                 // File-level replacement also preserves matching SKILL.md timestamps
                 // when only a missing/outdated ownership marker needs repair.
                 let result = if owns_name {
-                    replace_owned_instructions(target, spec, &desired_hash, actual_hash.as_deref())
+                    replace_owned_instructions(target, spec, &desired_hash, actual_hash.as_deref(), &self.owner)
                 } else {
-                    replace(target, spec, &desired_hash)
+                    replace(target, spec, &desired_hash, &self.owner)
                 };
                 match result {
                     Ok(()) => {
@@ -324,7 +338,7 @@ impl SkillReconciler {
                 match read_marker(&target) {
                     Ok(marker) => marker
                         .as_ref()
-                        .is_some_and(|marker| marker.controls(&spec.name)),
+                        .is_some_and(|marker| marker.controls(&self.owner, &spec.name)),
                     Err(error) => {
                         preserve_original_records.insert(target.clone());
                         outcome.warnings.push(SkillWarning {
@@ -631,12 +645,13 @@ fn replace_owned_instructions(
     spec: &SkillSpec,
     desired_hash: &str,
     actual_hash: Option<&str>,
+    owner: &str,
 ) -> std::io::Result<()> {
     ensure_owned_directory(target)?;
     if actual_hash != Some(desired_hash) {
         write_owned_file(&target.join("SKILL.md"), &spec.content)?;
     }
-    let marker = marker_content(&OwnershipMarker::new(&spec.name, desired_hash))
+    let marker = marker_content(&OwnershipMarker::new(owner, &spec.name, desired_hash))
         .map_err(std::io::Error::other)?;
     write_owned_file(&target.join(MARKER_FILE), &marker)
 }
@@ -686,14 +701,18 @@ fn replace_managed_directory(
     target: &Path,
     spec: &SkillSpec,
     desired_hash: &str,
+    owner: &str,
 ) -> std::io::Result<()> {
-    replace_managed_directory_with(target, spec, desired_hash, |from, to| fs::rename(from, to))
+    replace_managed_directory_with(target, spec, desired_hash, owner, |from, to| {
+        fs::rename(from, to)
+    })
 }
 
 fn replace_managed_directory_with(
     target: &Path,
     spec: &SkillSpec,
     desired_hash: &str,
+    owner: &str,
     rename: impl FnMut(&Path, &Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     let parent = target
@@ -704,7 +723,7 @@ fn replace_managed_directory_with(
         .prefix(".browserclaw-skill-")
         .tempdir_in(parent)?;
     fs::write(temporary.path().join("SKILL.md"), &spec.content)?;
-    let marker = OwnershipMarker::new(&spec.name, desired_hash);
+    let marker = OwnershipMarker::new(owner, &spec.name, desired_hash);
     let marker = marker_content(&marker).map_err(std::io::Error::other)?;
     fs::write(temporary.path().join(MARKER_FILE), marker)?;
     let prepared = temporary.keep();
@@ -915,7 +934,7 @@ mod tests {
                     }
                     Ok(target.to_path_buf())
                 },
-                |_, _, _| {
+                |_, _, _, _| {
                     replace_calls += 1;
                     Ok(())
                 },
@@ -1051,9 +1070,9 @@ mod tests {
             &replacement,
             Some(&consumers),
             &environment,
-            |target, spec, hash| {
+            |target, spec, hash, owner| {
                 let mut calls = 0;
-                replace_managed_directory_with(target, spec, hash, |from, to| {
+                replace_managed_directory_with(target, spec, hash, owner, |from, to| {
                     calls += 1;
                     if calls == 2 {
                         Err(std::io::Error::other("injected replace failure"))

@@ -103,23 +103,18 @@ export const INSTALL_STEPS: readonly InstallStep[] = [
  * both, and doing only the first is the failure this copy exists to stop.
  */
 
-/** The skills.sh pack this repository publishes. */
-export const SKILLS_PACK = 'browseros-ai/browseros'
-
-/** The one skill in that pack meant for users, rather than for working on this repo. */
-export const SKILL_NAME = 'browseros-neo'
+/** The one skill meant for users; it ships in this repository under `skills/neob`. */
+export const SKILL_NAME = 'neob'
 
 /**
- * Scoped to the single skill on purpose. `npx skills add <pack>` with no
- * flag installs five skills, four of them ours for working on this codebase:
- * ask-internal, write-internal-docs, sup-writing-plans and write-docs. One of
- * those points an agent at a private repo, so none of them belong in a user's
- * agent. Verified by running both forms.
+ * The skill lives in this repository, so it is copied rather than fetched from a
+ * published pack: the installed copy then matches the server that installed it.
+ * `<repo>` is the BrowserOS checkout the user is running NeoB from.
  */
-export const SKILL_INSTALL_COMMAND = `npx skills add ${SKILLS_PACK} --skill ${SKILL_NAME}`
+export const SKILL_INSTALL_COMMAND = `cp -R <repo>/skills/${SKILL_NAME} ~/.agents/skills/`
 
 /** The name the MCP server should be given, matching what the skill looks for. */
-export const MCP_SERVER_NAME = 'browseros-neo'
+export const MCP_SERVER_NAME = 'neob'
 
 export const MANUAL_SETUP_DOCS_URL = 'https://docs.browseros.com/neo/mcp/manual'
 

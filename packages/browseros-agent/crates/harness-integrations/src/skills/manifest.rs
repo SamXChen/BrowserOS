@@ -47,17 +47,20 @@ pub(crate) struct OwnershipMarker {
 }
 
 impl OwnershipMarker {
-    pub(crate) fn new(skill_name: &str, content_hash: &str) -> Self {
+    pub(crate) fn new(owner: &str, skill_name: &str, content_hash: &str) -> Self {
         Self {
             version: 1,
-            managed_by: "browserclaw".to_string(),
+            managed_by: owner.to_string(),
             skill_name: skill_name.to_string(),
             content_hash: content_hash.to_string(),
         }
     }
 
-    pub(crate) fn controls(&self, skill_name: &str) -> bool {
-        self.version == 1 && self.managed_by == "browserclaw" && self.skill_name == skill_name
+    /// Only this build's own marker counts as ownership. A marker written by another
+    /// build of the same server is deliberately not accepted, so two installs can share
+    /// a home directory without claiming each other's directories.
+    pub(crate) fn controls(&self, owner: &str, skill_name: &str) -> bool {
+        self.version == 1 && self.managed_by == owner && self.skill_name == skill_name
     }
 }
 

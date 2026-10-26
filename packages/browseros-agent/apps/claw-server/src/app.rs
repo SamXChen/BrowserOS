@@ -12,6 +12,7 @@ use crate::{
         agent_settings::AgentSettingsStore,
         audit::AuditWorker,
         browser::{BrowserService, TabRegistry},
+        build_info::BuildInfo,
         cockpit::{CockpitQuery, SessionVisualService, TabActivityRecord, TabActivityService},
         harness::HarnessService,
         harness_skills::load_browserclaw_skill,
@@ -28,7 +29,13 @@ use crate::{
     storage::JsonStore,
 };
 use axum::{Router, middleware};
-use std::{env, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    env,
+    ffi::OsString,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -67,6 +74,9 @@ pub struct AppState {
     /// How the data this server opened compares to the schema this build knows, published on
     /// `/system/info` so the app can prompt an update when the database is ahead of the server.
     pub migration: MigrationOutcome,
+    /// What this binary is, filled in on a background thread because hashing the executable
+    /// takes a moment and must not delay the port opening.
+    pub build_info: Arc<OnceLock<BuildInfo>>,
 }
 
 /// Overall cap on how long a human-help request stays open before it is reaped, so a crashed or
@@ -122,10 +132,9 @@ impl AppState {
         // reconcile keeps in step with whatever this decided at launch. A
         // server that gains the credential later needs a restart for installed
         // skills to follow it.
-        let skill = load_browserclaw_skill(
-            &config.resources_dir,
-            crate::config::PursueOffering::of(agent_settings.jev_token_source()),
-        )?;
+        let skill = load_browserclaw_skill(crate::config::PursueOffering::of(
+            agent_settings.jev_token_source(),
+        ))?;
         let harness = Arc::new(HarnessService::new_with_managed_skill(
             config.browserclaw_dir.join("mcp-manager"),
             config.browserclaw_dir.join("harness-integrations"),
@@ -252,6 +261,7 @@ impl AppState {
             extension_updates: Arc::default(),
             shutdown: ShutdownHandle::new(),
             migration,
+            build_info: Arc::new(OnceLock::new()),
         })
     }
 

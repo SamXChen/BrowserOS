@@ -31,12 +31,14 @@ fn provisioned_roots_survive_disconnect_and_preserve_foreign_skills()
     fs::write(claude.join("SKILL.md"), "user-authored skill")?;
 
     let first = reconciler.reconcile(&spec("v1")?, &agents(&[AgentId::Codex]), &environment)?;
-    assert_eq!(first.installed, 1);
+    // Two provisioned roots plant it: the shared agents directory and
+    // ~/.codebuddy/skills. The claude copy is user-authored and must stay untouched.
+    assert_eq!(first.installed, 2);
     assert_eq!(first.warnings.len(), 1);
     let before = fs::metadata(shared.join("SKILL.md"))?.modified()?;
     let disconnected = reconciler.reconcile(&spec("v1")?, &BTreeSet::new(), &environment)?;
     assert_eq!(disconnected.removed, 0);
-    assert_eq!(disconnected.unchanged, 1);
+    assert_eq!(disconnected.unchanged, 2);
     assert_eq!(fs::metadata(shared.join("SKILL.md"))?.modified()?, before);
     assert_eq!(
         fs::read_to_string(claude.join("SKILL.md"))?,
@@ -51,7 +53,9 @@ fn provisioned_roots_survive_disconnect_and_preserve_foreign_skills()
 
     fs::remove_file(shared.join("SKILL.md"))?;
     let repaired = reconciler.reconcile(&spec("v2")?, &BTreeSet::new(), &environment)?;
-    assert_eq!(repaired.updated, 1);
+    // Only the shared copy was deleted, but both provisioned roots are rewritten to the
+    // new spec version.
+    assert_eq!(repaired.updated, 2);
     assert_eq!(fs::read_to_string(shared.join("SKILL.md"))?, "v2");
     Ok(())
 }
@@ -71,9 +75,10 @@ fn proactive_skills_honor_custom_claude_and_copilot_homes() -> Result<(), Box<dy
         &BTreeSet::new(),
         &environment,
     )?;
-    assert_eq!(result.installed, 3);
+    assert_eq!(result.installed, 4);
     for target in [
         "home/.agents/skills/browserclaw/SKILL.md",
+        "home/.codebuddy/skills/browserclaw/SKILL.md",
         "claude-profile/skills/browserclaw/SKILL.md",
         "copilot-profile/skills/browserclaw/SKILL.md",
     ] {

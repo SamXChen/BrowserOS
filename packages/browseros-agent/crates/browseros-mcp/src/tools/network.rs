@@ -4,28 +4,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const DESCRIPTION: &str = "\
-Capture HTTP traffic from the user's browser and install mock rules.
+/// The tool guide: the single source of the mock-rule rules. The server
+/// instructions quote the same constant instead of keeping a second copy.
+pub const GUIDE: &str = include_str!("guides/network.md");
 
-Typical loop: the user clicks Copy reference on a request in the Network panel and pastes the \
-netref_* id here. Call `handoff_get` to read the full request/response, then `rule_apply` with a \
-short `name` to install a mock. Rules have names: later, pass the name (or the rule_* id) as \
-`rule` to `rule_get`, `rule_apply`, `rule_status` or `cleanup`; `rule_list` lists them. \
-`rule_apply` answers `active` only after the browser's Fetch interception is enabled; `pending` \
-means it is saved and waiting for the browser and goes live automatically. Only then tell the \
-user the rule is live and to refresh or repeat the action.
-
-For edits that depend on live upstream data, pass `processor: {script}` instead of `response`: \
-the script defines a synchronous `function process({request, response})` and returns \
-`{status?, statusText?, headers?, setHeaders?, body?}` or `undefined`. It runs after the real \
-response arrives and may rewrite any response header, including `set-cookie`; failures pass \
-the original response through.
-
-Rules apply to every tab by default (`scope: \"all_tabs\"`), so say so explicitly. Use \
-`rule_status` to check whether a rule is active and what it has matched. Use `cleanup` only when \
-the user asks to delete something; disabling is `rule_apply` with `rule` and `enabled: false`, \
-or the switch in the Network panel. Batch cleanup (`target: \"rules\" | \"records\" | \
-\"handoffs\"`) must first report the count and wait for the user's confirmation.";
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -155,7 +137,7 @@ struct NetworkArgs {
 pub fn definition() -> crate::framework::ToolDef {
     super::def::<NetworkArgs>(
         "network",
-        DESCRIPTION,
+        GUIDE,
         Some(super::open_world_annotations()),
         handler,
     )

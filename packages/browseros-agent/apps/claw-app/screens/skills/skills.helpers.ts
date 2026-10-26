@@ -7,15 +7,17 @@
  */
 
 /** Every skill is namespaced under this prefix so it never collides with a
- *  user's own agent skills and the whole set autocompletes on `/neo`. */
-export const NEO_SKILL_PREFIX = 'neo-'
+ *  user's own agent skills and the whole set autocompletes on `/neob`.
+ *  Must match `SAVED_SKILL_PREFIX` in
+ *  `apps/claw-server/src/identity/product.rs`. */
+export const NEO_SKILL_PREFIX = 'neob-'
 
 /**
  * The canonical, neo-namespaced name for a user-typed suffix. Mirrors the
  * server: a bare suffix is prefixed, and an over-typed `neo-` is not doubled.
  */
 export function neoName(suffix: string): string {
-  return `${NEO_SKILL_PREFIX}${suffix.replace(/^neo-/, '')}`
+  return `${NEO_SKILL_PREFIX}${suffix.replace(/^neob-/, '')}`
 }
 
 /** The command a user pastes into a coding agent to run a skill. */

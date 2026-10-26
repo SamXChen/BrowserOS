@@ -16,11 +16,11 @@ const DEFAULT_SESSION_IDLE_MS: u64 = 30 * 60 * 1000;
 const DEFAULT_SESSION_RETENTION_MS: u64 = 60 * 60 * 1000;
 const DEFAULT_SESSION_SWEEP_INTERVAL_MS: u64 = 60 * 1000;
 const DEFAULT_REPLAY_RETENTION_DAYS: u64 = 7;
-const BROWSERCLAW_DIR_NAME: &str = ".browserclaw";
+const BROWSERCLAW_DIR_NAME: &str = crate::identity::DATA_DIR_NAME;
 /// Developer assertion of the native BrowserOS version for builds whose launch config does
 /// not carry a usable one (dev/dogfood sidecars, stale local stamps). Logged at startup.
 pub const NATIVE_VERSION_ENV: &str = "CLAW_NATIVE_BROWSEROS_VERSION";
-const DEV_BROWSERCLAW_DIR_NAME: &str = ".browserclaw-dev";
+const DEV_BROWSERCLAW_DIR_NAME: &str = crate::identity::DEV_DATA_DIR_NAME;
 
 #[derive(Debug, Parser)]
 #[command(name = "browseros-claw-server-rs")]
@@ -428,11 +428,11 @@ mod tests {
 
         let debug_cfg = Config::load_with_env_and_default_dev_mode(&config_path, &env, true)?;
         assert!(debug_cfg.dev_mode);
-        assert!(debug_cfg.browserclaw_dir.ends_with(".browserclaw-dev"));
+        assert!(debug_cfg.browserclaw_dir.ends_with(".neob-dev"));
 
         let release_cfg = Config::load_with_env_and_default_dev_mode(&config_path, &env, false)?;
         assert!(!release_cfg.dev_mode);
-        assert!(release_cfg.browserclaw_dir.ends_with(".browserclaw"));
+        assert!(release_cfg.browserclaw_dir.ends_with(".neob"));
         Ok(())
     }
 
@@ -446,14 +446,14 @@ mod tests {
         let env = ConfigEnv::with_vars(vars, dir.path().join("home"));
         let release_cfg = Config::load_with_env_and_default_dev_mode(&config_path, &env, false)?;
         assert!(!release_cfg.dev_mode);
-        assert!(release_cfg.browserclaw_dir.ends_with(".browserclaw"));
+        assert!(release_cfg.browserclaw_dir.ends_with(".neob"));
 
         let mut vars = BTreeMap::new();
         vars.insert("NODE_ENV".to_string(), "production".to_string());
         let env = ConfigEnv::with_vars(vars, dir.path().join("home"));
         let debug_cfg = Config::load_with_env_and_default_dev_mode(&config_path, &env, true)?;
         assert!(debug_cfg.dev_mode);
-        assert!(debug_cfg.browserclaw_dir.ends_with(".browserclaw-dev"));
+        assert!(debug_cfg.browserclaw_dir.ends_with(".neob-dev"));
         Ok(())
     }
 
@@ -466,13 +466,13 @@ mod tests {
         fs::write(&prod_config_path, r#"{"flags":{"devMode":false}}"#)?;
         let prod_cfg = Config::load_with_env_and_default_dev_mode(&prod_config_path, &env, true)?;
         assert!(!prod_cfg.dev_mode);
-        assert!(prod_cfg.browserclaw_dir.ends_with(".browserclaw"));
+        assert!(prod_cfg.browserclaw_dir.ends_with(".neob"));
 
         let dev_config_path = dir.path().join("dev-sidecar.json");
         fs::write(&dev_config_path, r#"{"flags":{"devMode":true}}"#)?;
         let dev_cfg = Config::load_with_env_and_default_dev_mode(&dev_config_path, &env, false)?;
         assert!(dev_cfg.dev_mode);
-        assert!(dev_cfg.browserclaw_dir.ends_with(".browserclaw-dev"));
+        assert!(dev_cfg.browserclaw_dir.ends_with(".neob-dev"));
         Ok(())
     }
 
@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(cfg.server_port, 9300);
         assert_eq!(cfg.cdp_port, 49338);
         assert_eq!(cfg.proxy_port, Some(9444));
-        assert!(cfg.browserclaw_dir.ends_with(".browserclaw-dev"));
+        assert!(cfg.browserclaw_dir.ends_with(".neob-dev"));
         assert_eq!(cfg.public_mcp_url(), "http://127.0.0.1:9444/mcp");
         // Proxy configured: the source of truth is the proxy port.
         assert_eq!(cfg.public_base_url(), "http://127.0.0.1:9444");

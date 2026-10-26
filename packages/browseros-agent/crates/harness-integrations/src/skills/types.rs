@@ -122,6 +122,11 @@ impl SkillEnvironment {
         if let Some(copilot_home) = self.variable("COPILOT_HOME") {
             roots.push(copilot_home.join("skills"));
         }
+        // CodeBuddy and WorkBuddy both read this directory, and neither
+        // is in the catalog, so it is provisioned unconditionally instead of per client.
+        // CodeBuddy may also read a shared root above, in which case it lists the skill
+        // twice; the copies are identical, which is accepted.
+        roots.push(self.home_dir.join(".codebuddy/skills"));
         roots
     }
 

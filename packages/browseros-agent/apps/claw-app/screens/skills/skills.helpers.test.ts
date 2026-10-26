@@ -15,16 +15,16 @@ describe('skillCommand', () => {
 })
 
 describe('neoName', () => {
-  it('namespaces a bare suffix under neo-', () => {
-    expect(neoName('weather')).toBe('neo-weather')
+  it('namespaces a bare suffix under neob-', () => {
+    expect(neoName('weather')).toBe('neob-weather')
   })
 
-  it('does not double an over-typed neo- prefix', () => {
-    expect(neoName('neo-weather')).toBe('neo-weather')
+  it('does not double an over-typed neob- prefix', () => {
+    expect(neoName('neob-weather')).toBe('neob-weather')
   })
 
-  it('leaves an interior neo- untouched', () => {
-    expect(neoName('weather-neo-check')).toBe('neo-weather-neo-check')
+  it('leaves an interior neob- untouched', () => {
+    expect(neoName('weather-neob-check')).toBe('neob-weather-neob-check')
   })
 })
 
@@ -66,7 +66,7 @@ describe('parseSkillBody', () => {
     '---',
     'name: inbox-sweep',
     'description: "Check the inbox"',
-    'tools: browseros-neo',
+    'compatibility: Requires the neob MCP server.',
     '---',
     '',
     '## Steps',

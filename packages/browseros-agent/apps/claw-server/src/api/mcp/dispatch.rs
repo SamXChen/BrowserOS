@@ -330,7 +330,7 @@ async fn dispatch_tool_call_with(
         call.dispatch_cancel.cancel();
         call.cancel.cancel();
         return Err(McpError::invalid_request(
-            "BrowserOS neo session is no longer live",
+            "NeoB session is no longer live",
             None,
         ));
     }
@@ -588,14 +588,14 @@ pub(super) async fn browser_unavailable_message(state: &AppState) -> String {
             seconds => format!("{seconds}s"),
         };
         return format!(
-            "browser link lost {ago} ago and the server is reconnecting; BrowserOS neo is running, so wait a moment and retry this tool. Do not relaunch it and do not fall back to another browser tool."
+            "browser link lost {ago} ago and the server is reconnecting; NeoB is running, so wait a moment and retry this tool. Do not relaunch it and do not fall back to another browser tool."
         );
     }
     if link.ever_connected {
-        return "browser link is down and the server is reconnecting; BrowserOS neo was reachable a moment ago, so wait and retry this tool. Do not relaunch it and do not fall back to another browser tool."
+        return "browser link is down and the server is reconnecting; NeoB was reachable a moment ago, so wait and retry this tool. Do not relaunch it and do not fall back to another browser tool."
             .to_string();
     }
-    "no link to the browser yet and the server is still retrying; wait a few seconds and retry this tool. If BrowserOS neo is not running, tell the user to start it. Do not fall back to another browser tool."
+    "no link to the browser yet and the server is still retrying; wait a few seconds and retry this tool. If NeoB is not running, tell the user to start it. Do not fall back to another browser tool."
         .to_string()
 }
 
@@ -2039,7 +2039,7 @@ mod tests {
         };
         assert_eq!(
             error.message.as_ref(),
-            "BrowserOS neo session is no longer live"
+            "NeoB session is no longer live"
         );
         assert!(
             call.state
