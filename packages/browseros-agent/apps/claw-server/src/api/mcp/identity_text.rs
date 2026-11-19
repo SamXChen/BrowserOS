@@ -16,12 +16,15 @@ use super::prompt::mcp_instructions;
 /// Names that belong to another build or another product. A self-name or a trigger word
 /// must never be one of these: the agent would call NeoB by a name the user did not use,
 /// and a second installed browser skill would compete for the same trigger.
-const FORBIDDEN_TEXT_LIST: [&str; 5] = [
+const FORBIDDEN_TEXT_LIST: [&str; 8] = [
     "BrowserOS neo",
     "browseros-neo",
     "browserclaw",
     "BrowserClaw",
     "\"use neo\"",
+    "neo-<name>",
+    "/neo;",
+    "a neo task",
 ];
 
 /// Prefixes of a `BrowserOS` occurrence that describe the kernel: version statements, and
@@ -42,10 +45,7 @@ fn agent_visible_text_uses_only_the_neob_identity() {
     let text_list = instructions_corpus()
         .into_iter()
         .chain(tool_corpus())
-        .chain(std::iter::once((
-            "server_title",
-            crate::identity::DISPLAY_NAME.to_string(),
-        )));
+        .chain(super::service::local_agent_visible_text());
 
     for (source, text) in text_list {
         for needle in FORBIDDEN_TEXT_LIST {
@@ -73,6 +73,10 @@ fn agent_visible_text_introduces_neob() {
     assert!(
         instructions.contains("NeoB"),
         "instructions must introduce NeoB"
+    );
+    assert!(
+        instructions.contains("`neob` server for the whole task"),
+        "instructions must scope the whole task to the neob server"
     );
     assert_eq!(crate::identity::DISPLAY_NAME, "NeoB");
 }

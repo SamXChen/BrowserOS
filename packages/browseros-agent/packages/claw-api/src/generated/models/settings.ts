@@ -13,7 +13,7 @@
  */
 
 /**
- * User settings for the tools BrowserOS neo offers to agents.
+ * User settings for the tools NeoB offers to agents.
  * @export
  * @interface AgentSettings
  */

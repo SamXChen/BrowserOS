@@ -27,7 +27,13 @@ fn state_tags() -> Vec<String> {
         RuleState::Disabled,
     ]
     .into_iter()
-    .map(|state| state.as_str().to_string());
+    .map(|state| match state {
+        RuleState::Active
+        | RuleState::Pending
+        | RuleState::Unbound
+        | RuleState::Failed
+        | RuleState::Disabled => state.as_str().to_string(),
+    });
 
     let reasons = [
         StateReason::NoBrowser,
@@ -43,9 +49,19 @@ fn state_tags() -> Vec<String> {
         StateReason::Superseded,
     ]
     .into_iter()
-    .map(|reason| {
+    .map(|reason| match reason {
+        StateReason::NoBrowser
+        | StateReason::NoTab
+        | StateReason::ApplyTimeout
+        | StateReason::TabClosed
+        | StateReason::BodyMissing
+        | StateReason::BodyTooLarge
+        | StateReason::ProcessorInvalid
+        | StateReason::User
+        | StateReason::StoppedAll
+        | StateReason::Superseded => reason.as_str().to_string(),
         // `replaced_by:<id>` is a prefix match; the allowlist covers it.
-        reason.as_str().split(':').next().unwrap_or_default().to_string()
+        StateReason::ReplacedBy(_) => "replaced_by".to_string(),
     });
 
     states.chain(reasons).collect()
@@ -104,7 +120,12 @@ fn the_guide_stays_within_its_budget_and_drops_dead_wording() {
         "the network guide is {} bytes, over the {GUIDE_BUDGET} byte budget",
         GUIDE.len()
     );
-    for dead in ["apply_failed", "one-click ignore", "ignore-keys", "near-misses"] {
+    for dead in [
+        "apply_failed",
+        "one-click ignore",
+        "ignore-keys",
+        "near-misses",
+    ] {
         assert!(!GUIDE.contains(dead), "the guide still says `{dead}`");
     }
 }

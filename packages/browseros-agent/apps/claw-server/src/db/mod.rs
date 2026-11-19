@@ -49,7 +49,7 @@ pub enum MigrationOutcome {
     /// The binary was in step with the database, or it applied the pending migrations.
     UpToDate,
     /// The database carries migrations this build does not know: it was written by a newer
-    /// BrowserOS neo. The server starts read-forward on the superset schema instead of crashing.
+    /// NeoB. The server starts read-forward on the superset schema instead of crashing.
     DatabaseAhead { unknown: Vec<String> },
 }
 
@@ -66,7 +66,7 @@ impl Database {
         if let MigrationOutcome::DatabaseAhead { unknown } = &migration {
             tracing::warn!(
                 unknown = unknown.join(", "),
-                "database was migrated by a newer BrowserOS neo; starting read-forward. Update BrowserOS neo so the server matches its data."
+                "database was migrated by a newer NeoB; starting read-forward. Update NeoB so the server matches its data."
             );
         }
         Ok(Self {
@@ -198,7 +198,7 @@ async fn connect_and_migrate<M: MigratorTrait>(
 ///
 /// `sea_orm`'s `Migrator::up` aborts when the database records a migration this build does not
 /// contain (the "migration file is missing" error), which turns a routine version skew (a newer
-/// BrowserOS neo migrated the data, then an older sidecar runs) into a crash before the server can
+/// NeoB migrated the data, then an older sidecar runs) into a crash before the server can
 /// bind. When the database only holds EXTRA newer migrations and every migration this build knows
 /// is already applied, the schema is an additive superset and the older server can run on it, so
 /// we skip `up()` and start read-forward. We only run `up()` when there is nothing unknown to
@@ -236,8 +236,8 @@ async fn migrate_forward_compatible<M: MigratorTrait>(
         // does not know. We cannot reconcile that; fail with a clear, actionable message rather
         // than the opaque sea-orm error.
         (false, true) => Err(DbErr::Custom(format!(
-            "database schema is incompatible with this BrowserOS neo build: it has migrations this \
-             build does not know ({}) and this build has unapplied migrations. Update BrowserOS neo \
+            "database schema is incompatible with this NeoB build: it has migrations this \
+             build does not know ({}) and this build has unapplied migrations. Update NeoB \
              so the server matches its data.",
             unknown.join(", ")
         ))),

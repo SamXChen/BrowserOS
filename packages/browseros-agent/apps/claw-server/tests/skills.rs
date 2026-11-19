@@ -153,6 +153,9 @@ async fn skill_crud_round_trips_and_writes_the_canonical_file() -> anyhow::Resul
     );
     let content = std::fs::read_to_string(&skill_md)?;
     assert!(content.contains("A brand new step"));
+    assert!(content.contains("description: \"Updated description\""));
+    assert!(content.contains("compatibility: Requires the neob MCP server."));
+    assert!(!content.contains("tools:"));
 
     let (status, _) = request(router, "DELETE", "/api/v1/skills/neob-inbox-sweep", None).await?;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -457,7 +460,11 @@ async fn skill_create_namespaces_a_bare_name_under_neob() -> anyhow::Result<()> 
 
     // The canonical file lives under the prefixed name, and its frontmatter and
     // the mark step both carry the prefixed name so a re-run marks correctly.
-    let skill_md = app.root.join("skills").join("neob-weather").join("SKILL.md");
+    let skill_md = app
+        .root
+        .join("skills")
+        .join("neob-weather")
+        .join("SKILL.md");
     let content = std::fs::read_to_string(&skill_md)?;
     assert!(content.contains("name: neob-weather"));
     assert!(content.contains("mark_skill_run tool with name: neob-weather"));
@@ -551,7 +558,10 @@ async fn skill_run_recorded_from_a_marked_session() -> anyhow::Result<()> {
         .record_session_end("run-sess", "closed", None)
         .await?;
 
-    state.skill_runs.mark("run-sess", "neob-inbox-sweep").await?;
+    state
+        .skill_runs
+        .mark("run-sess", "neob-inbox-sweep")
+        .await?;
     assert!(state.skill_runs.finalize("run-sess").await?);
     // Projecting again is a no-op.
     assert!(!state.skill_runs.finalize("run-sess").await?);
@@ -682,7 +692,10 @@ async fn deleting_a_skill_discards_its_run_history() -> anyhow::Result<()> {
         .audit_log
         .record_session_end("run-sess", "closed", None)
         .await?;
-    state.skill_runs.mark("run-sess", "neob-inbox-sweep").await?;
+    state
+        .skill_runs
+        .mark("run-sess", "neob-inbox-sweep")
+        .await?;
     assert!(state.skill_runs.finalize("run-sess").await?);
     assert_eq!(state.skills.get("neob-inbox-sweep").await?.runs.len(), 1);
 

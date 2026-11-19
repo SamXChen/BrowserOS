@@ -1,7 +1,7 @@
 {
   "items": [
     {
-      "name": "masason-email-sweep",
+      "name": "neob-masason-email-sweep",
       "description": "Check the Masason inbox for new deadlines and draft what is owed",
       "site": "mail.google.com",
       "origin": "agent",

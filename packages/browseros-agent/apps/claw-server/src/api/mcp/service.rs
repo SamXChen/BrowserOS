@@ -70,12 +70,24 @@ const AGENT_NAME_ARG: &str = "agentName";
 // for them. Naming the alternative here matters because this text is read at the
 // moment an agent is deciding how to keep continuity.
 pub const SESSION_ARG_DESCRIPTION: &str = "Opaque logical task handle, including its browser_target binding. You receive one only if your client connects without its own transport session id: the server returns it in every tool result's `_meta` under `com.browseros.neo/session` and in result text. Pass it as `session` on later calls; natural successors retain the task's latest target even across server restart. If you never see one, your continuity across a remade connection is your tab group id instead: pass a known groupId on tabs action=\"new\" to recover its task binding before creation. Existing tabs keep their actual ownership. Omit session on the first call or to start a separate task after Stop; a stopped handle stays stopped. Stale browser targets require explicit browser_target reselection or clear.";
-const AGENT_NAME_ARG_DESCRIPTION: &str = "Optional fallback identifying your client application: claude, codex, cursor, opencode, antigravity, vscode, or zed. For another application, use its short product name. Put your task name in name_session, not here. NeoB prefers recognized MCP client metadata for the visible prefix; this fallback is used when that metadata does not identify a known product.";
+const AGENT_NAME_ARG_DESCRIPTION: &str = concat!(
+    "Optional fallback identifying your client application: claude, codex, cursor, opencode, antigravity, vscode, or zed. For another application, use its short product name. Put your task name in name_session, not here. ",
+    crate::product_name!(),
+    " prefers recognized MCP client metadata for the visible prefix; this fallback is used when that metadata does not identify a known product."
+);
 const SAVE_SKILL_TOOL_NAME: &str = "save_skill";
-const SAVE_SKILL_DESCRIPTION: &str = "When you finish a repeatable browser task the user is likely to run again, save it as a NeoB skill so it can be re-run by name later; save genuinely repeatable, user-valuable tasks, not one-offs. Give a lowercase-hyphen name, a one-line description, the ordered steps, and any shortcuts learned this run. In the steps, name the exact browser SDK calls you actually used this session (e.g. browser.wait, browser.read, browser.pages.newPage) so a later run reuses them verbatim; never invent, rename, or guess a method that is not in the run tool's SDK (there is no browser.waitFor, for example). The skill is saved and linked into your agents under a neo- prefix (neo-<name>) so it never clobbers your own skills and you can list them all by typing /neo; a name given without the prefix is namespaced automatically. Call again with the same name to update it in place.";
+const SAVE_SKILL_DESCRIPTION: &str = concat!(
+    "When you finish a repeatable browser task the user is likely to run again, save it as a ",
+    crate::product_name!(),
+    " skill so it can be re-run by name later; save genuinely repeatable, user-valuable tasks, not one-offs. Give a lowercase-hyphen name, a one-line description, the ordered steps, and any shortcuts learned this run. In the steps, name the exact browser SDK calls you actually used this session (e.g. browser.wait, browser.read, browser.pages.newPage) so a later run reuses them verbatim; never invent, rename, or guess a method that is not in the run tool's SDK (there is no browser.waitFor, for example). The skill is saved and linked into your agents under a neob- prefix (neob-<name>) so it never clobbers your own skills and you can list them all by typing /neob; a name given without the prefix is namespaced automatically. Call again with the same name to update it in place."
+);
 const MARK_SKILL_RUN_TOOL_NAME: &str = "mark_skill_run";
 const RUN_TOOL_NAME: &str = "run";
-const MARK_SKILL_RUN_DESCRIPTION: &str = "Mark this browser session as a run of a saved skill so NeoB records the run and its cost once the session ends. Call this once, at the start, when you are running a skill, with the skill's name.";
+const MARK_SKILL_RUN_DESCRIPTION: &str = concat!(
+    "Mark this browser session as a run of a saved skill so ",
+    crate::product_name!(),
+    " records the run and its cost once the session ends. Call this once, at the start, when you are running a skill, with the skill's name."
+);
 const REQUEST_HELP_TOOL_NAME: &str = "request_human_help";
 const REQUEST_HELP_DESCRIPTION: &str = "Ask a human to take over this page when you hit something only a person can do: a sign-in, a one-time code, a captcha, an account choice, or an approval you should not make yourself. Give a short `reason` (what you need), optional `details` (what the human should know), an optional `resumeHint` (what you will do after, so the human knows the task continues), and an optional `kind` (login, captcha, approval, other). This blocks for a short while and returns a status. If the status is \"waiting\", call await_human_help to keep waiting; do nothing else on the page until the status is \"resolved\". The cockpit shows your request so a human can take over the tab and hand control back.";
 const AWAIT_HELP_TOOL_NAME: &str = "await_human_help";
@@ -154,10 +166,45 @@ Needs JEV_TOKEN in the server's environment, and is not listed without one.";
 const AWAIT_HELP_DESCRIPTION: &str = "Keep waiting on an open human-help request. Call this repeatedly after request_human_help until the status is \"resolved\" (the human handed control back), \"cancelled\" (the run was stopped), or \"timed_out\" (no human responded in time). Do nothing else on the page while waiting.";
 /// For an agent whose cached tool list still offers request_human_help after the user turned
 /// human help off.
-const HUMAN_HELP_OFF_MESSAGE: &str = "Human help is turned off in NeoB settings. Do not wait for a human here: stop and tell the user in your chat what you need.";
+const HUMAN_HELP_OFF_MESSAGE: &str = concat!(
+    "Human help is turned off in ",
+    crate::product_name!(),
+    " settings. Do not wait for a human here: stop and tell the user in your chat what you need."
+);
 /// How long each wait call blocks before returning a `waiting` status. Short enough to stay under
 /// any reasonable client tool-call timeout so an agent that cannot hold a long call just re-calls.
 const HELP_WAIT_CHUNK: std::time::Duration = std::time::Duration::from_secs(75);
+
+/// Agent-visible text owned by this module rather than the shared tool catalog.
+#[cfg(test)]
+pub(in crate::api::mcp) fn local_agent_visible_text() -> Vec<(&'static str, String)> {
+    vec![
+        ("server_name", SERVER_NAME.to_string()),
+        ("server_title", SERVER_TITLE.to_string()),
+        ("name_session", NAME_SESSION_DESCRIPTION.to_string()),
+        ("agent_name_arg", AGENT_NAME_ARG_DESCRIPTION.to_string()),
+        ("save_skill", SAVE_SKILL_DESCRIPTION.to_string()),
+        ("mark_skill_run", MARK_SKILL_RUN_DESCRIPTION.to_string()),
+        ("request_human_help", REQUEST_HELP_DESCRIPTION.to_string()),
+        ("await_human_help", AWAIT_HELP_DESCRIPTION.to_string()),
+        ("pursue", PURSUE_DESCRIPTION.to_string()),
+        ("session_arg", SESSION_ARG_DESCRIPTION.to_string()),
+        ("human_help_off", HUMAN_HELP_OFF_MESSAGE.to_string()),
+        (
+            "session_not_live",
+            concat!(crate::product_name!(), " session is no longer live").to_string(),
+        ),
+        ("session_stopped", SESSION_STOPPED_FROM_COCKPIT.to_string()),
+        (
+            "session_handle",
+            session_handle_guidance("test-handle", false),
+        ),
+        (
+            "session_handle_replaced",
+            session_handle_guidance("test-handle", true),
+        ),
+    ]
+}
 
 /// Owns one MCP transport lifetime. Drop best-effort schedules removal of a started
 /// server session, which records its end and begins retained-group handling.
@@ -337,9 +384,10 @@ impl ClawMcpService {
             .try_register_dispatch(dispatch_id.clone(), dispatch_registration)
             .await
         {
-            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-                "NeoB session is no longer live",
-            )]);
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(concat!(
+                crate::product_name!(),
+                " session is no longer live"
+            ))]);
         }
         let started_at = StdInstant::now();
 
@@ -596,9 +644,10 @@ impl ClawMcpService {
             .try_register_dispatch(dispatch_id.clone(), dispatch_cancel)
             .await
         {
-            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-                "NeoB session is no longer live",
-            )]);
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(concat!(
+                crate::product_name!(),
+                " session is no longer live"
+            ))]);
         }
         let started_at = StdInstant::now();
         let rename = match rename_session(Some(started.session.as_ref()), raw_args).await {
@@ -703,9 +752,10 @@ impl ClawMcpService {
             .try_register_dispatch(dispatch_id.clone(), dispatch_cancel)
             .await
         {
-            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-                "NeoB session is no longer live",
-            )]);
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(concat!(
+                crate::product_name!(),
+                " session is no longer live"
+            ))]);
         }
         let started_at = StdInstant::now();
         let session_id = started.session.id().as_str().to_string();
@@ -749,9 +799,10 @@ impl ClawMcpService {
             .try_register_dispatch(dispatch_id.clone(), dispatch_cancel)
             .await
         {
-            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-                "NeoB session is no longer live",
-            )]);
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(concat!(
+                crate::product_name!(),
+                " session is no longer live"
+            ))]);
         }
         let started_at = StdInstant::now();
         let session_id = started.session.id().as_str().to_string();
@@ -912,9 +963,10 @@ impl ClawMcpService {
             .try_register_dispatch(dispatch_id.clone(), dispatch_cancel.clone())
             .await
         {
-            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-                "NeoB session is no longer live",
-            )]);
+            return CallToolResult::error(vec![rmcp::model::ContentBlock::text(concat!(
+                crate::product_name!(),
+                " session is no longer live"
+            ))]);
         }
         // A terminal cancel (cockpit Stop via the dispatch token, or session teardown via the
         // child token) discards the request; the per-call request token only ends this wait, so a
@@ -1028,8 +1080,9 @@ impl ClawMcpService {
                 lifecycle.stop_reported = true;
                 return Err(McpError::invalid_request(
                     format!(
-                        "NeoB session {session_id} was stopped and will not resume. \
-                         Call again and a new session will start."
+                        "{} session {session_id} was stopped and will not resume. \
+                         Call again and a new session will start.",
+                        crate::identity::DISPLAY_NAME
                     ),
                     None,
                 ));
@@ -2338,13 +2391,27 @@ fn with_agent_name_arg(mut tool: Tool) -> Tool {
 /// Stop is an instruction from the user, so this refuses rather than quietly continuing the
 /// work somewhere else. It names the exact next move, because an error the agent cannot act
 /// on would just become a different way to produce a burst.
+const SESSION_STOPPED_FROM_COCKPIT: &str = concat!(
+    "This browser session was stopped from the ",
+    crate::product_name!(),
+    " cockpit and will not resume. Omit the `session` argument on your next call to start a new one, and do not resend this handle."
+);
+
 fn session_was_stopped() -> McpError {
-    McpError::invalid_request(
-        "This browser session was stopped from the NeoB cockpit and will not \
-         resume. Omit the `session` argument on your next call to start a new one, and do \
-         not resend this handle.",
-        None,
-    )
+    McpError::invalid_request(SESSION_STOPPED_FROM_COCKPIT, None)
+}
+
+pub(in crate::api::mcp) fn session_handle_guidance(handle: &str, replaced: bool) -> String {
+    let slug = crate::identity::SLUG;
+    if replaced {
+        format!(
+            "[{slug} session: {handle}. The handle you sent is no longer active, so this call continued in a new session. Pass this exact value as the `session` argument from now on, and stop sending the previous one.]"
+        )
+    } else {
+        format!(
+            "[{slug} session: {handle}. Pass this exact value as the `session` argument on every following call to keep this browser session and its tab ownership.]"
+        )
+    }
 }
 
 fn attach_session_handle(
@@ -2371,15 +2438,7 @@ fn attach_session_handle(
             .meta
             .get_or_insert_with(MetaObject::new)
             .insert(SESSION_META_KEY.to_string(), Value::String(handle.clone()));
-        let line = if replaced {
-            format!(
-                "[browseros-neo session: {handle}. The handle you sent is no longer active, so this call continued in a new session. Pass this exact value as the `session` argument from now on, and stop sending the previous one.]"
-            )
-        } else {
-            format!(
-                "[browseros-neo session: {handle}. Pass this exact value as the `session` argument on every following call to keep this browser session and its tab ownership.]"
-            )
-        };
+        let line = session_handle_guidance(&handle, replaced);
         call_result
             .content
             .push(rmcp::model::ContentBlock::text(line));

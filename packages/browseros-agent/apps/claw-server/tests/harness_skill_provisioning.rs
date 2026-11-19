@@ -149,10 +149,7 @@ fn mcp_discovery_failure_does_not_block_provisioning_or_delete_connected_skills(
             let manifest_path = state.join("mcp/manifest.json");
             let manifest_before = fs::read(&manifest_path)?;
             fs::write(&manifest_path, "{ broken MCP manifest")?;
-            for root in [
-                ".agents/skills/neob",
-                ".claude/skills/neob",
-            ] {
+            for root in [".agents/skills/neob", ".claude/skills/neob"] {
                 fs::remove_dir_all(home.join(root))?;
             }
             let repaired = service.run_skill_reconciliation().await?;
@@ -415,9 +412,7 @@ fn reconciliation_discovers_apps_and_respects_disconnect_after_restart() -> anyh
             reopened
                 .run_reconciliation("http://127.0.0.1:9300/mcp")
                 .await?;
-            assert!(
-                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob")
-            );
+            assert!(!fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob"));
             assert!(fs::read_to_string(home.join(".cursor/mcp.json"))?.contains(":9300/mcp"));
             assert_eq!(fs::metadata(&shared)?.modified()?, shared_modified);
             assert!(
@@ -465,9 +460,7 @@ fn upgrade_preserves_old_disconnects_but_discovers_later_apps() -> anyhow::Resul
             service
                 .run_reconciliation("http://127.0.0.1:9200/mcp")
                 .await?;
-            assert!(
-                !fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob")
-            );
+            assert!(!fs::read_to_string(home.join(".codex/config.toml"))?.contains("neob"));
             assert!(fs::read_to_string(home.join(".cursor/mcp.json"))?.contains(":9200/mcp"));
             fs::create_dir_all(home.join(".config/opencode"))?;
             fs::write(home.join(".config/opencode/opencode.json"), "{}")?;
@@ -610,19 +603,35 @@ fn saves_and_removes_a_skill_in_every_provisioned_root() -> anyhow::Result<()> {
 
             let name = "neob-weekly-report";
             service
-                .install_skill(SkillSpec::new(name, "---\nname: neob-weekly-report\ndescription: x\n---\n")?)
+                .install_skill(SkillSpec::new(
+                    name,
+                    "---\nname: neob-weekly-report\ndescription: x\n---\n",
+                )?)
                 .await?;
             for root in [".agents/skills", ".claude/skills", ".codebuddy/skills"] {
                 let path = home.join(root).join(name).join("SKILL.md");
                 assert!(path.exists(), "missing {root}/{name}");
-                let marker = fs::read_to_string(home.join(root).join(name).join(".browserclaw-managed.json"))?;
-                assert!(marker.contains("\"managedBy\": \"neob\""), "marker in {root}: {marker}");
+                let marker = fs::read_to_string(
+                    home.join(root).join(name).join(".browserclaw-managed.json"),
+                )?;
+                assert!(
+                    marker.contains("\"managedBy\": \"neob\""),
+                    "marker in {root}: {marker}"
+                );
             }
 
             service.uninstall_skill(name).await?;
             for root in [".agents/skills", ".claude/skills", ".codebuddy/skills"] {
-                assert!(!home.join(root).join(name).exists(), "{root}/{name} survived uninstall");
+                assert!(
+                    !home.join(root).join(name).exists(),
+                    "{root}/{name} survived uninstall"
+                );
             }
+            let manifest = fs::read_to_string(home.join("state/skills/skills.json"))?;
+            assert!(
+                !manifest.contains(name),
+                "uninstall left a manifest record: {manifest}"
+            );
             Ok(())
         },
     )

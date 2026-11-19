@@ -18,7 +18,7 @@ UpdateTelemetryRequest:
       type: boolean
 AgentSettings:
   type: object
-  description: User settings for the tools BrowserOS neo offers to agents.
+  description: User settings for the tools NeoB offers to agents.
   additionalProperties: false
   required: [humanHelpEnabled, closeTabGroupsAfterTask, jevTokenSource]
   properties:

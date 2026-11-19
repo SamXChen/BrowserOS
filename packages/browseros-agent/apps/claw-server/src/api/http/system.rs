@@ -1,4 +1,5 @@
 use crate::db::MigrationOutcome;
+use crate::services::build_info::{BuildInfo, Integrity};
 use crate::{AppState, VERSION};
 use axum::{Json, extract::State, http::StatusCode};
 use claw_api::models::{
@@ -6,7 +7,6 @@ use claw_api::models::{
     ShutdownResponse, SystemCapabilities, SystemDiagnostics, SystemInfo,
     system_capabilities::RecordingIngestVersion,
 };
-use crate::services::build_info::{BuildInfo, Integrity};
 
 /// Liveness, plus the state of the link this server exists to provide.
 ///
@@ -53,7 +53,11 @@ async fn health_report(state: &AppState) -> HealthResponse {
     HealthResponse {
         browser: Some(Box::new(browser)),
         build: Some(Box::new(build_dto(
-            state.build_info.get().cloned().unwrap_or_else(BuildInfo::pending),
+            state
+                .build_info
+                .get()
+                .cloned()
+                .unwrap_or_else(BuildInfo::pending),
         ))),
         ..HealthResponse::default()
     }
@@ -85,7 +89,7 @@ pub(super) async fn shutdown(State(state): State<AppState>) -> Json<ShutdownResp
 
 pub(super) async fn info(State(state): State<AppState>) -> Json<SystemInfo> {
     let mut info = SystemInfo::new(
-        "BrowserOS neo".to_string(),
+        crate::identity::DISPLAY_NAME.to_string(),
         VERSION.to_string(),
         state.config.local_server_url(),
     );
@@ -99,7 +103,7 @@ pub(super) async fn info(State(state): State<AppState>) -> Json<SystemInfo> {
 }
 
 /// Translates how this server's data compares to its schema into the published signal the app uses
-/// to decide whether BrowserOS neo needs updating to match the data it opened.
+/// to decide whether NeoB needs updating to match the data it opened.
 fn schema_status(migration: &MigrationOutcome) -> SchemaStatus {
     match migration {
         MigrationOutcome::DatabaseAhead { unknown } => SchemaStatus::new(true, unknown.clone()),

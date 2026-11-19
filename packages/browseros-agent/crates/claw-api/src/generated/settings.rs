@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// AgentSettings : User settings for the tools BrowserOS neo offers to agents.
+/// AgentSettings : User settings for the tools NeoB offers to agents.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentSettings {
     /// Whether agents are offered request_human_help and await_human_help. When false, agents are told to report a block in their own chat instead.
@@ -25,7 +25,7 @@ pub struct AgentSettings {
 }
 
 impl AgentSettings {
-    /// User settings for the tools BrowserOS neo offers to agents.
+    /// User settings for the tools NeoB offers to agents.
     pub fn new(
         human_help_enabled: bool,
         close_tab_groups_after_task: bool,

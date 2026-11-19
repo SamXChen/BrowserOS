@@ -38,7 +38,7 @@ if [ ! -x "$NEO_BIN" ]; then
 fi
 
 # ---- 1) server 由 launchd 监管 ----
-# sidecar 由 deploy.sh 写出并随 release 一起切换；launcher 不再改它，也不再 nohup，
+# sidecar 由 deploy.sh 写出并随 release 一起切换；launcher 不再改它，只确保 server agent 已加载，
 # 这样拉起的进程总是与 current 指向的 release 一致。
 if [ -f "$STATE_DIR/deploy.lock" ]; then
   echo "部署进行中，跳过 server 检查" >&2

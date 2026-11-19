@@ -119,7 +119,7 @@ describe('skills API fixtures', () => {
       items: Array<Record<string, unknown>>
     }
     const skill = list.items[0] as Record<string, unknown>
-    expect(skill.name).toBe('masason-email-sweep')
+    expect(skill.name).toBe('neob-masason-email-sweep')
     expect(skill.origin).toBe('agent')
     expect(skill.version).toBe(4)
     expect(skill.cleanRunCount).toBe(17)
@@ -133,8 +133,8 @@ describe('skills API fixtures', () => {
       body: string
       runs: Array<Record<string, unknown>>
     }
-    expect(detail.skill.name).toBe('masason-email-sweep')
-    expect(detail.body).toContain('name: masason-email-sweep')
+    expect(detail.skill.name).toBe('neob-masason-email-sweep')
+    expect(detail.body).toContain('name: neob-masason-email-sweep')
     expect(detail.runs.length).toBeGreaterThan(0)
     expect(detail.runs[0]?.clean).toBe(true)
   })

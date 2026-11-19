@@ -1310,7 +1310,7 @@ export interface components {
        */
       recordingIngestMaxBytes?: number
     }
-    /** @description How the data this server opened compares to the schema this build knows. When the database was migrated by a newer BrowserOS neo, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update BrowserOS neo to match its data. */
+    /** @description How the data this server opened compares to the schema this build knows. When the database was migrated by a newer NeoB, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update NeoB to match its data. */
     SchemaStatus: {
       /** @description True when the database carries applied migrations this build does not contain. */
       databaseAhead: boolean
@@ -1362,7 +1362,7 @@ export interface components {
     UpdateTelemetryRequest: {
       consent: boolean
     }
-    /** @description User settings for the tools BrowserOS neo offers to agents. */
+    /** @description User settings for the tools NeoB offers to agents. */
     AgentSettings: {
       /** @description Whether agents are offered request_human_help and await_human_help. When false, agents are told to report a block in their own chat instead. */
       humanHelpEnabled: boolean
@@ -1757,7 +1757,7 @@ export interface components {
       otherBrowsers: number
       /**
        * Format: int64
-       * @description Tokens BrowserOS neo actually used across the measured runs.
+       * @description Tokens NeoB actually used across the measured runs.
        */
       used: number
       /**

@@ -5,9 +5,8 @@ use crate::{
 use harness_integrations::{
     AgentId, AgentScope, DisconnectInput, Error as ManagerError, InspectEntryInput, LinkInput,
     ListLinksFilter, ListedLink, ManifestLinkEntry, ManifestServerEntry, McpManager, McpServer,
-    McpServerSpec, ReconcileInput, ServerManifest, SkillEnvironment,
-    SkillReconcileOutcome, SkillReconciler, SkillSpec, SkillWarning, is_installed,
-    resolve_agent_surface,
+    McpServerSpec, ReconcileInput, ServerManifest, SkillEnvironment, SkillReconcileOutcome,
+    SkillReconciler, SkillSpec, SkillWarning, is_installed, resolve_agent_surface,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,8 +34,8 @@ pub const BROWSEROS_MCP_SERVER_NAME: &str = crate::identity::SLUG;
 // NeoB manages exactly one entry name. Names other builds have used must never be listed
 // as aliases: `is_historical_browseros_url` accepts any loopback port, so an alias here
 // makes periodic reconcile adopt, and disconnect delete, an entry this server does not
-// own. Older names of *this* build are migrated once by
-// `--migrate-identity`, which is why the lists below carry a single element.
+// own. Older names of *this* build were migrated once before this release,
+// which is why the lists below carry a single element.
 const BROWSEROS_LEGACY_MCP_SERVER_NAMES: [&str; 0] = [];
 const BROWSEROS_MCP_SERVER_NAMES: [&str; 1] = [BROWSEROS_MCP_SERVER_NAME];
 
@@ -283,7 +282,7 @@ impl HarnessService {
         .await?
     }
 
-    /// The agents currently linked to BrowserOS neo over MCP, i.e. the set a
+    /// The agents currently linked to NeoB over MCP, i.e. the set a
     /// newly authored skill links into by default.
     pub async fn connected_agents(&self) -> AppResult<BTreeSet<AgentId>> {
         let _guard = self.mutex.lock().await;
@@ -365,7 +364,7 @@ impl HarnessService {
 
         match result {
             Ok((created, config_path, skill_warning)) => {
-                tracing::info!(harness = %harness, agent = %agent, "connected BrowserOS neo to harness");
+                tracing::info!(harness = %harness, agent = %agent, "connected NeoB to harness");
                 if created {
                     self.analytics.capture(
                         events::HARNESS_CONNECTED,
@@ -441,7 +440,7 @@ impl HarnessService {
                     agent = %agent,
                     unlinked,
                     removed_manifest,
-                    "disconnected BrowserOS neo from harness"
+                    "disconnected NeoB from harness"
                 );
                 if unlinked {
                     self.analytics.capture(
@@ -704,7 +703,7 @@ fn reconcile_skill_warning(
 fn with_skill_retry_message(message: String, warning: Option<String>) -> String {
     match warning {
         Some(warning) => format!(
-            "{message} BrowserOS neo skill reconciliation needs a retry on restart or reconnect: {warning}"
+            "{message} NeoB skill reconciliation needs a retry on restart or reconnect: {warning}"
         ),
         None => message,
     }

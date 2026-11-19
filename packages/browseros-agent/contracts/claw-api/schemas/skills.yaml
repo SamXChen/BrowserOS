@@ -173,7 +173,7 @@ SkillTokenSavings:
     used:
       type: integer
       format: int64
-      description: Tokens BrowserOS neo actually used across the measured runs.
+      description: Tokens NeoB actually used across the measured runs.
     measuredRunCount:
       type: integer
       format: int64

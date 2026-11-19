@@ -68,7 +68,16 @@ function installFetchRecorder(options?: {
         if (unhealthyServerOrigins.has(origin)) {
           return new Response('{}', { status: 503 })
         }
-        return Response.json({ status: 'ok' })
+        return Response.json({
+          status: 'ok',
+          build: {
+            version: '0.0.75',
+            releaseSha: 'a7ee62a546d6d040232b7ac539f51d5e44453321',
+            binarySha256:
+              'a204e46ca2d45e768b61b3ef84dda09feb3df54ddf9636985bec083a7e4c1660',
+            integrity: 'ok',
+          },
+        })
       }
       if (url.endsWith('/health')) {
         const origin = new URL(url).origin
@@ -251,7 +260,16 @@ describe('BrowserOS managed port resolution', () => {
 
     const response = await (await apiClient()).getHealth()
 
-    expect(response).toEqual({ status: 'ok' })
+    expect(response).toEqual({
+      status: 'ok',
+      build: {
+        version: '0.0.75',
+        releaseSha: 'a7ee62a546d6d040232b7ac539f51d5e44453321',
+        binarySha256:
+          'a204e46ca2d45e768b61b3ef84dda09feb3df54ddf9636985bec083a7e4c1660',
+        integrity: 'ok',
+      },
+    })
     expect(requests).toEqual(['http://127.0.0.1:9511/system/health'])
   })
 
@@ -262,7 +280,16 @@ describe('BrowserOS managed port resolution', () => {
 
     const response = await (await apiClient()).getHealth()
 
-    expect(response).toEqual({ status: 'ok' })
+    expect(response).toEqual({
+      status: 'ok',
+      build: {
+        version: '0.0.75',
+        releaseSha: 'a7ee62a546d6d040232b7ac539f51d5e44453321',
+        binarySha256:
+          'a204e46ca2d45e768b61b3ef84dda09feb3df54ddf9636985bec083a7e4c1660',
+        integrity: 'ok',
+      },
+    })
     expect(requests).toEqual(['http://127.0.0.1:9432/system/health'])
   })
 

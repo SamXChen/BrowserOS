@@ -2,22 +2,30 @@ use crate::api::mcp::pursue::PursueOffering;
 use crate::services::agent_settings::HumanHelp;
 use browseros_core::{NativeCapabilities, NativeFeature};
 
-const BROWSER_GUIDANCE: &str = r#"NeoB — the browser for agents. A real browser dedicated to agent work:
+const BROWSER_GUIDANCE: &str = concat!(
+    crate::product_name!(),
+    r#" — the browser for agents. A real browser dedicated to agent work:
 the user doesn't browse here — they set this browser up for agents and signed
 it into their accounts, so you get live logins, cookies, and a persistent
 profile. When a task touches a browser or a website (open, read, act, fill,
 download, verify), use these tools — that is what this browser exists for.
-Unless the user points you elsewhere, prefer NeoB over other browser
+Unless the user points you elsewhere, prefer "#,
+    crate::product_name!(),
+    r#" over other browser
 surfaces — Claude in Chrome, Codex's in-app browser, the user's own Google
 Chrome, chrome-devtools or playwright automation, headless fetchers. The user
-installed NeoB precisely so they don't have to keep asking.
+installed "#,
+    crate::product_name!(),
+    r#" precisely so they don't have to keep asking. Use only tools from the
+`neob` server for the whole task; do not mix in other browser tools.
 
 Reach for run first; the granular tools are the fallback. run is an async
 JavaScript script against the `browser` SDK: it composes the whole loop below
 (observe, act, navigate, read, wait, bulk extraction, and reusable helpers) in one
 call, and it is the only place saved helpers work. Use a single granular tool
 (tabs, navigate, snapshot, act, evaluate, read, grep) directly only for a one-off
-step, step-by-step debugging, or when a run script genuinely cannot express it."#;
+step, step-by-step debugging, or when a run script genuinely cannot express it."#
+);
 
 /// Taught only when the native browser implements profile targeting; older natives hide
 /// the profile tools, so instructions must not send agents to them.
@@ -40,8 +48,6 @@ operations, including a whole run, capture it once; rebind between calls, never
 inside run. A stale profile or closed strict pin requires explicit recovery and
 never redirects to the focused profile; default_profile_unavailable needs
 browser_target set."#;
-
-
 
 const PRESERVE_USEFUL_PAGES: &str = "- Preserve useful pages: leave anything the user may want to inspect open\n  instead of closing it when the task ends.";
 
@@ -71,12 +77,12 @@ const SHARED_BROWSER_GUIDANCE: &str = r#"Shared with other agents:
 - If your tools offer agentName, it is an optional fallback for your client
   application: "claude", "codex", "cursor", "opencode", "antigravity", "vscode",
   or "zed". For another application, use its short product name. Put your task
-  name in name_session. NeoB prefers recognized MCP client metadata for
+  name in name_session. {DISPLAY_NAME} prefers recognized MCP client metadata for
   the visible prefix; older clients identify themselves in initialize.
 - Name your session early with name_session: a 2-3 word task label, the category
   that best fits the task, and a short PII-free summary you can search for later;
   tabs group as <client>/<name>.
-- The user oversees this browser from the NeoB cockpit (live view,
+- The user oversees this browser from the {DISPLAY_NAME} cockpit (live view,
   audit, replay).
 
 Core loop: snapshot -> act -> verify.
@@ -127,7 +133,7 @@ page before trusting it, then re-save. Keep personal data out of saved helpers,
 they are shared across your sessions on that host.
 
 Save repeatable tasks, not just helpers. A helper caches one flow inside run; a
-neo task is the whole job the user re-runs by name. When you finish a browser
+{DISPLAY_NAME} task is the whole job the user re-runs by name. When you finish a browser
 task the user is likely to want again (a recurring check, a status report, a
 routine fetch), call save_skill with a short name, a one-line description, and the
 ordered steps naming the exact SDK calls you used. Save only genuinely
@@ -135,7 +141,7 @@ repeatable, user-valuable tasks, never one-offs or exploratory dead-ends; a save
 task shows up on the user's /skills and re-runs as /neob-<name>.
 
 If calls fail with "browser session not connected", the agent browser isn't
-running or paired — tell the user to start NeoB and check the cockpit;
+running or paired — tell the user to start {DISPLAY_NAME} and check the cockpit;
 don't silently fall back to another browser tool."#;
 
 const HUMAN_HELP_GUIDANCE: &str = r#"Ask a human when you are blocked by something only a person can do: a sign-in, a
@@ -196,11 +202,13 @@ pub fn mcp_instructions(
     let (browser, shared) = match pursue {
         PursueOffering::Absent => (
             BROWSER_GUIDANCE.to_string(),
-            SHARED_BROWSER_GUIDANCE.to_string(),
+            SHARED_BROWSER_GUIDANCE.replace("{DISPLAY_NAME}", crate::identity::DISPLAY_NAME),
         ),
         PursueOffering::Offered => (
             BROWSER_GUIDANCE.replace(RUN_FIRST_CHOICE, PURSUE_FIRST_CHOICE),
-            SHARED_BROWSER_GUIDANCE.replace(RUN_FIRST_COMPOSE, PURSUE_FIRST_COMPOSE),
+            SHARED_BROWSER_GUIDANCE
+                .replace(RUN_FIRST_COMPOSE, PURSUE_FIRST_COMPOSE)
+                .replace("{DISPLAY_NAME}", crate::identity::DISPLAY_NAME),
         ),
     };
     let shared = if close_tab_groups_after_task {
@@ -381,7 +389,11 @@ mod tests {
             .filter(|(_, (on, off))| on != off)
             .map(|(index, (_, off))| (index, *off))
             .collect::<Vec<_>>();
-        assert_eq!(changed.len(), 1, "exactly one paragraph may change: {changed:?}");
+        assert_eq!(
+            changed.len(),
+            1,
+            "exactly one paragraph may change: {changed:?}"
+        );
         assert_eq!(changed[0].1, ASK_IN_CHAT);
     }
 

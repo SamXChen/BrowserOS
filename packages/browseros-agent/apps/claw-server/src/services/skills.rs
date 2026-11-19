@@ -19,11 +19,7 @@ use tokio::sync::Mutex;
 /// Names this server refuses to hand to a user-authored skill: the managed product
 /// skill, plus the two directory names the user already keeps by hand in the clients
 /// NeoB provisions.
-const RESERVED_SKILL_NAMES: [&str; 3] = [
-    crate::identity::SLUG,
-    "neob-cli",
-    "neob-browser",
-];
+const RESERVED_SKILL_NAMES: [&str; 3] = [crate::identity::SLUG, "neob-cli", "neob-browser"];
 
 /// Every user- and agent-authored skill is namespaced under this prefix so its
 /// on-disk and linked-agent directory can never collide with a user's own
@@ -312,10 +308,8 @@ impl SkillService {
 
         // Decide what, if anything, to write to disk. A structured edit renders
         // the whole SKILL.md so its frontmatter description can never drift from
-        // the stored column. A raw `body` is written verbatim (agent authoring
-        // or a manual override). A metadata-only description change patches just
-        // the frontmatter line so the file matches the new column without
-        // disturbing the rest of the body.
+        // the stored column. Raw bodies and metadata-only edits both pass through
+        // the same frontmatter normalization; the Markdown body is preserved.
         let rewrite: Option<String> = if steps.is_some() || learned_notes.is_some() {
             Some(render_skill_markdown(
                 name,
@@ -324,10 +318,14 @@ impl SkillService {
                 &learned_notes.unwrap_or_default(),
             ))
         } else if let Some(raw) = body {
-            Some(raw)
+            Some(normalize_skill_frontmatter(
+                name,
+                &raw,
+                &effective_description,
+            ))
         } else if description.is_some() {
             let current = self.read_body(&body_path).await;
-            Some(sync_frontmatter_description(
+            Some(normalize_skill_frontmatter(
                 name,
                 &current,
                 &effective_description,
@@ -566,15 +564,13 @@ fn render_skill_markdown(
     out
 }
 
-/// Rewrite the `description:` line inside a SKILL.md frontmatter block so the
-/// on-disk file matches the stored description, leaving the rest of the body
-/// untouched. The description is JSON-encoded to stay a valid YAML scalar, the
-/// same way `render_skill_markdown` emits it. A body with no `---` frontmatter
-/// fence (a raw body written without one) gets a fresh frontmatter block
-/// prepended so the description is always present in the file.
-fn sync_frontmatter_description(name: &str, body: &str, description: &str) -> String {
+/// Normalize the saved-skill frontmatter while preserving the Markdown body and
+/// unrelated standard fields. Raw bodies follow the same Agent Skills rules as
+/// structured edits: canonical name/description, no legacy `tools`, and NeoB
+/// compatibility. A body without a frontmatter fence gets one prepended.
+fn normalize_skill_frontmatter(name: &str, body: &str, description: &str) -> String {
     let encoded = serde_json::to_string(description).unwrap_or_else(|_| "\"\"".to_string());
-    let mut lines: Vec<String> = body.lines().map(str::to_string).collect();
+    let lines: Vec<&str> = body.lines().collect();
     let closing = lines
         .first()
         .map(|line| line.trim_end())
@@ -593,16 +589,26 @@ fn sync_frontmatter_description(name: &str, body: &str, description: &str) -> St
         );
         return format!("{front}{body}");
     };
-    let description_line = lines
-        .iter_mut()
-        .take(closing)
-        .skip(1)
-        .find(|line| line.trim_start().starts_with("description:"));
-    match description_line {
-        Some(line) => *line = format!("description: {encoded}"),
-        None => lines.insert(1, format!("description: {encoded}")),
+
+    let mut out = format!(
+        "---\nname: {name}\ndescription: {encoded}\ncompatibility: {SKILL_COMPATIBILITY}\n"
+    );
+    for line in lines.iter().take(closing).skip(1) {
+        let trimmed = line.trim_start();
+        if ["name:", "description:", "compatibility:", "tools:"]
+            .into_iter()
+            .any(|field| trimmed.starts_with(field))
+        {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
     }
-    let mut out = lines.join("\n");
+    out.push_str("---");
+    for line in &lines[closing + 1..] {
+        out.push('\n');
+        out.push_str(line);
+    }
     if body.ends_with('\n') {
         out.push('\n');
     }
@@ -625,7 +631,10 @@ mod tests {
         assert_eq!(neo_prefixed("weather"), "neob-weather");
         assert_eq!(neo_prefixed("neob-weather"), "neob-weather");
         // Only a leading prefix is collapsed; an interior "neob-" is untouched.
-        assert_eq!(neo_prefixed("weather-neob-check"), "neob-weather-neob-check");
+        assert_eq!(
+            neo_prefixed("weather-neob-check"),
+            "neob-weather-neob-check"
+        );
     }
 
     #[test]
@@ -649,9 +658,18 @@ mod tests {
     #[test]
     fn reserved_names_are_rejected() {
         for raw in ["cli", "browser"] {
+            let error = normalized_skill_name(raw)
+                .err()
+                .unwrap_or_else(|| panic!("{raw} unexpectedly passed validation"));
             assert!(
-                normalized_skill_name(raw).is_err(),
-                "{raw} collides with a directory NeoB owns"
+                matches!(
+                    error,
+                    crate::error::AppError::Http {
+                        status: axum::http::StatusCode::CONFLICT,
+                        ..
+                    }
+                ),
+                "{raw} must fail with a namespace conflict"
             );
         }
         // The reserved names are already prefixed forms, so a bare `neob` is namespaced

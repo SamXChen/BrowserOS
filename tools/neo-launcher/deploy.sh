@@ -21,6 +21,9 @@ LABEL="${NEOB_SERVER_LABEL:-com.sam.neob.server}"
 CONFIG_ENV="${NEOB_CONFIG_ENV:-$HOME/Applications/NeoB.app/Contents/Resources/config.env}"
 ARTIFACT=""
 ROLLBACK=0
+PREVIOUS_CURRENT=""
+SWITCHED=0
+DEPLOY_OK=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -52,7 +55,7 @@ if [ -f "$LOCK" ]; then
   exit 1
 fi
 echo "$$" > "$LOCK"
-trap 'rm -f "$LOCK"' EXIT
+trap cleanup EXIT
 
 health() {
   curl -s -m 2 "http://127.0.0.1:$SERVER_PORT/system/health" 2>/dev/null || true
@@ -96,7 +99,7 @@ start_server() {
   local target_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
   if [ ! -f "$source_plist" ]; then
     echo "缺少 $source_plist；先运行 install-agent.sh 生成它" >&2
-    exit 1
+    return 1
   fi
   sed -e "s|__STATE__|$STATE|g" \
       -e "s|__STATE_ROOT__|$STATE_ROOT|g" \
@@ -115,7 +118,7 @@ start_server() {
   done
   launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || {
     echo "无法加载 $LABEL；手动运行：launchctl bootstrap gui/$(id -u) $target_plist" >&2
-    exit 1
+    return 1
   }
   launchctl kickstart -k "gui/$(id -u)/$LABEL"
 }
@@ -138,6 +141,30 @@ sys.exit(0 if ok else 1)
     sleep "$HEALTH_POLL_INTERVAL"
   done
   return 1
+}
+
+cleanup() {
+  local rc=$?
+  trap - EXIT
+  set +e
+  if [ "$rc" -ne 0 ] && [ "$SWITCHED" -eq 1 ] && [ "$DEPLOY_OK" -eq 0 ]; then
+    echo "部署失败，恢复部署前的 release" >&2
+    if [ -n "$PREVIOUS_CURRENT" ] && [ -d "$PREVIOUS_CURRENT" ]; then
+      if switch_current "$PREVIOUS_CURRENT" && write_sidecar && start_server; then
+        echo "current 已恢复：$PREVIOUS_CURRENT" >&2
+      else
+        echo "旧 release 已恢复链接，但 server 重启失败；请检查 $LABEL" >&2
+      fi
+    else
+      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+      pkill -f "$STATE/sidecar.json" >/dev/null 2>&1
+      rm -f "$STATE_ROOT/server/current"
+      echo "部署前没有 current，已移除失败版本的链接" >&2
+    fi
+    echo "需要手动回滚时：NEOB_STATE_ROOT='$STATE_ROOT' NEOB_SERVER_LABEL='$LABEL' $HERE/deploy.sh --rollback" >&2
+  fi
+  rm -f "$LOCK"
+  exit "$rc"
 }
 
 previous_release() {
@@ -183,17 +210,23 @@ else
 fi
 
 # ---- 2) stop, switch, start ------------------------------------------------
+PREVIOUS_CURRENT="$(readlink "$STATE_ROOT/server/current" 2>/dev/null || true)"
 stop_server
 
 switch_current "$RELEASE"
+SWITCHED=1
 write_sidecar
 start_server
 
 if ! wait_for_integrity "$SHA12"; then
-  echo "启动后 integrity 未达到 ok；用 deploy.sh --rollback 回滚" >&2
+  echo "启动后 integrity 未达到 ok；退出时将自动恢复旧 release" >&2
   health
   exit 1
 fi
 
+DEPLOY_OK=1
 echo "部署完成：$SHA12"
+echo "本次 release：$RELEASE"
+echo "上一次 release：${PREVIOUS_CURRENT:-无}"
+echo "回滚命令：$HERE/deploy.sh --rollback"
 health

@@ -13,8 +13,8 @@
 export const NEO_SKILL_PREFIX = 'neob-'
 
 /**
- * The canonical, neo-namespaced name for a user-typed suffix. Mirrors the
- * server: a bare suffix is prefixed, and an over-typed `neo-` is not doubled.
+ * The canonical, NeoB-namespaced name for a user-typed suffix. Mirrors the
+ * server: a bare suffix is prefixed, and an over-typed `neob-` is not doubled.
  */
 export function neoName(suffix: string): string {
   return `${NEO_SKILL_PREFIX}${suffix.replace(/^neob-/, '')}`

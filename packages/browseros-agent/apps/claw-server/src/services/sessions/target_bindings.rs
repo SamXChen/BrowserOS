@@ -48,9 +48,10 @@ impl Record {
 
     fn require_live(&self) -> AppResult<()> {
         if self.stopped {
-            return Err(AppError::Internal(
-                "NeoB session was stopped and will not resume".into(),
-            ));
+            return Err(AppError::Internal(format!(
+                "{} session was stopped and will not resume",
+                crate::identity::DISPLAY_NAME
+            )));
         }
         Ok(())
     }

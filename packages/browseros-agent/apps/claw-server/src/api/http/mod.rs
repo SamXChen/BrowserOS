@@ -1,4 +1,4 @@
-//! Canonical BrowserOS neo HTTP API and shared request middleware.
+//! Canonical NeoB HTTP API and shared request middleware.
 
 use super::mcp::streamable_http_service;
 use crate::{
@@ -270,7 +270,7 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
             CanonicalError::new(
                 StatusCode::FORBIDDEN,
                 "forbidden",
-                "this endpoint is restricted to BrowserOS neo",
+                concat!("this endpoint is restricted to ", crate::product_name!()),
                 Some(&request_id),
             )
             .into_response()

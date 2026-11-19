@@ -604,3 +604,27 @@ fn foreign_targets_and_corrupt_manifests_are_preserved() -> Result<(), Box<dyn s
     assert_eq!(fs::read_to_string(state.join("skills.json"))?, corrupt);
     Ok(())
 }
+
+#[test]
+fn neob_owner_does_not_adopt_a_foreign_owned_directory() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempdir()?;
+    let environment = SkillEnvironment::new(root.path().join("home"), TargetPlatform::Linux);
+    let reconciler = SkillReconciler::new(root.path().join("state")).with_owner("neob");
+    let target = resolve_agent_skill_target(AgentId::ClaudeCode, "neob", &environment)?;
+    fs::create_dir_all(&target)?;
+    fs::write(target.join("SKILL.md"), "foreign")?;
+    fs::write(
+        target.join(".browserclaw-managed.json"),
+        r#"{"managedBy":"browserclaw","skillName":"neob","contentHash":"foreign"}"#,
+    )?;
+
+    let outcome = reconciler.reconcile(
+        &SkillSpec::new("neob", "managed")?,
+        &agents(&[AgentId::ClaudeCode]),
+        &environment,
+    )?;
+    assert_eq!(outcome.warnings.len(), 1);
+    assert!(outcome.warnings[0].message.contains("neob"));
+    assert_eq!(fs::read_to_string(target.join("SKILL.md"))?, "foreign");
+    Ok(())
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   formatRelativeTime,
   formatTokens,
+  NEO_SKILL_PREFIX,
   neoName,
   parseSkillBody,
   skillCommand,
@@ -15,6 +16,10 @@ describe('skillCommand', () => {
 })
 
 describe('neoName', () => {
+  it('shares the NeoB saved-skill prefix', () => {
+    expect(NEO_SKILL_PREFIX).toBe('neob-')
+  })
+
   it('namespaces a bare suffix under neob-', () => {
     expect(neoName('weather')).toBe('neob-weather')
   })

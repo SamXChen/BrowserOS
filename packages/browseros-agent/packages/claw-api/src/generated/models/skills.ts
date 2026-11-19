@@ -416,7 +416,7 @@ export interface SkillTokenSavings {
      */
     otherBrowsers: number;
     /**
-     * Tokens BrowserOS neo actually used across the measured runs.
+     * Tokens NeoB actually used across the measured runs.
      * @type {number}
      * @memberof SkillTokenSavings
      */

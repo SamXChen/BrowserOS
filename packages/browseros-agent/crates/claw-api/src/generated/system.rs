@@ -128,7 +128,7 @@ pub mod health_response {
     pub use super::HealthResponseStatus as Status;
 }
 
-/// SchemaStatus : How the data this server opened compares to the schema this build knows. When the database was migrated by a newer BrowserOS neo, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update BrowserOS neo to match its data.
+/// SchemaStatus : How the data this server opened compares to the schema this build knows. When the database was migrated by a newer NeoB, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update NeoB to match its data.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SchemaStatus {
     /// True when the database carries applied migrations this build does not contain.
@@ -140,7 +140,7 @@ pub struct SchemaStatus {
 }
 
 impl SchemaStatus {
-    /// How the data this server opened compares to the schema this build knows. When the database was migrated by a newer BrowserOS neo, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update BrowserOS neo to match its data.
+    /// How the data this server opened compares to the schema this build knows. When the database was migrated by a newer NeoB, the server runs read-forward on the columns it understands and reports the migrations it does not have, so the app can prompt the user to update NeoB to match its data.
     pub fn new(database_ahead: bool, unknown_migrations: Vec<String>) -> SchemaStatus {
         SchemaStatus {
             database_ahead,

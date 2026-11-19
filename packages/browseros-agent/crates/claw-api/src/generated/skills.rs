@@ -338,7 +338,7 @@ pub struct SkillTokenSavings {
     /// Tokens a screenshot-first agent (other browsers) would have spent across the same runs.
     #[serde(rename = "otherBrowsers")]
     pub other_browsers: i64,
-    /// Tokens BrowserOS neo actually used across the measured runs.
+    /// Tokens NeoB actually used across the measured runs.
     #[serde(rename = "used")]
     pub used: i64,
     /// How many of the skill's runs had a measured efficiency projection.

@@ -2,7 +2,7 @@
   "items": [
     {
       "id": "run_0000000000000000000018",
-      "skillName": "masason-email-sweep",
+      "skillName": "neob-masason-email-sweep",
       "sessionId": "sess_run18",
       "runNumber": 18,
       "agentId": "Claude Code",
@@ -14,7 +14,7 @@
     },
     {
       "id": "run_0000000000000000000017",
-      "skillName": "masason-email-sweep",
+      "skillName": "neob-masason-email-sweep",
       "sessionId": "sess_run17",
       "runNumber": 17,
       "agentId": "Codex",
