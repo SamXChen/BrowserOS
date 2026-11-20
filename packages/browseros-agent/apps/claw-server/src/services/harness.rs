@@ -5,8 +5,9 @@ use crate::{
 use harness_integrations::{
     AgentId, AgentScope, DisconnectInput, Error as ManagerError, InspectEntryInput, LinkInput,
     ListLinksFilter, ListedLink, ManifestLinkEntry, ManifestServerEntry, McpManager, McpServer,
-    McpServerSpec, ReconcileInput, ServerManifest, SkillEnvironment, SkillReconcileOutcome,
-    SkillReconciler, SkillSpec, SkillWarning, is_installed, resolve_agent_surface,
+    McpServerSpec, MigrateServerInput, ReconcileInput, ServerManifest, SkillEnvironment,
+    SkillReconcileOutcome, SkillReconciler, SkillSpec, SkillWarning, is_installed,
+    resolve_agent_surface,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,7 +19,10 @@ use std::{
     path::{Path, PathBuf},
     process,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
@@ -30,7 +34,6 @@ use preferences::Preferences;
 pub use reconciliation::ReconciliationOutcome;
 
 pub const BROWSEROS_MCP_SERVER_NAME: &str = crate::identity::SLUG;
-
 // NeoB manages exactly one entry name. Names other builds have used must never be listed
 // as aliases: `is_historical_browseros_url` accepts any loopback port, so an alias here
 // makes periodic reconcile adopt, and disconnect delete, an entry this server does not
@@ -129,7 +132,7 @@ pub struct ConnectionState {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IntegrityScanOutcome {
     pub verified: usize,
     pub drifted: usize,
@@ -145,6 +148,13 @@ pub struct UrlMigrationOutcome {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IdentityMigrationOutcome {
+    pub migrated: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FirstRunConnectOutcome {
     pub connected: usize,
     pub failed: usize,
@@ -153,6 +163,9 @@ pub struct FirstRunConnectOutcome {
     pub seeded_existing: bool,
 }
 
+/// Owns shared agent MCP configs and skill links. Dev instances are read-only guests:
+/// background maintenance does nothing and explicit connection changes are refused,
+/// because the installed app owns the same files even when Claw state is isolated.
 #[derive(Clone)]
 pub struct HarnessService {
     manager: McpManager,
@@ -162,13 +175,27 @@ pub struct HarnessService {
     managed_skill: Option<ManagedSkill>,
     mutex: Arc<Mutex<()>>,
     analytics: Arc<dyn AnalyticsSink>,
+    read_only: bool,
 }
 
 #[derive(Clone)]
 struct ManagedSkill {
     reconciler: SkillReconciler,
     spec: SkillSpec,
+    /// The guide installed while ultrafast is on, when the server has one.
+    ultrafast_spec: Option<SkillSpec>,
+    ultrafast: Arc<AtomicBool>,
     environment: SkillEnvironment,
+}
+
+impl ManagedSkill {
+    /// The guide agents should have now.
+    fn current_spec(&self) -> &SkillSpec {
+        match &self.ultrafast_spec {
+            Some(spec) if self.ultrafast.load(Ordering::Acquire) => spec,
+            _ => &self.spec,
+        }
+    }
 }
 
 impl HarnessService {
@@ -208,6 +235,8 @@ impl HarnessService {
                 .with_provisioned_roots(environment.common_skill_roots())
                 .with_owned_name(super::harness_skills::MANAGED_SKILL_DIRECTORY),
             spec,
+            ultrafast_spec: None,
+            ultrafast: Arc::default(),
             environment,
         };
         Self::build(
@@ -234,7 +263,38 @@ impl HarnessService {
             managed_skill,
             mutex: Arc::new(Mutex::new(())),
             analytics,
+            read_only: false,
         }
+    }
+
+    /// Gives the managed guide its ultrafast variant, installed while `set_ultrafast_skill` is on.
+    #[must_use]
+    pub fn with_ultrafast_skill(mut self, spec: SkillSpec) -> Self {
+        if let Some(managed) = &mut self.managed_skill {
+            managed.ultrafast_spec = Some(spec);
+        }
+        self
+    }
+
+    /// Switches every connected agent's guide to the ultrafast variant or back, re-installing it
+    /// only when that changes. Returns whether it changed.
+    pub async fn set_ultrafast_skill(&self, on: bool) -> AppResult<bool> {
+        let Some(managed) = &self.managed_skill else {
+            return Ok(false);
+        };
+        if managed.ultrafast_spec.is_none() || managed.ultrafast.swap(on, Ordering::AcqRel) == on {
+            return Ok(false);
+        }
+        self.run_skill_reconciliation().await?;
+        Ok(true)
+    }
+
+    /// Set before sharing the service so HTTP, background tasks and skill publishing all
+    /// inherit the same ownership policy, including after a supervisor restarts the server.
+    #[must_use]
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
     }
 
     /// Reconcile a user-authored skill into every connected agent, returning
@@ -242,6 +302,11 @@ impl HarnessService {
     /// MCP-link mutations through the shared lock so the shared skills.json
     /// manifest stays consistent.
     pub async fn install_skill(&self, spec: SkillSpec) -> AppResult<BTreeSet<AgentId>> {
+        // Local skill authoring remains usable in dev; publishing into shared agent
+        // directories belongs to the installed app, so there are no linked consumers.
+        if self.read_only {
+            return Ok(BTreeSet::new());
+        }
         let _guard = self.mutex.lock().await;
         let manager = self.manager.clone();
         let workspace_dir = self.workspace_dir.clone();
@@ -268,6 +333,9 @@ impl HarnessService {
 
     /// Remove a skill from every agent directory it was linked into. Idempotent.
     pub async fn uninstall_skill(&self, name: &str) -> AppResult<()> {
+        if self.read_only {
+            return Ok(());
+        }
         let _guard = self.mutex.lock().await;
         let spec = SkillSpec::new(name, String::new()).map_err(manager_app_error)?;
         let reconciler = SkillReconciler::new(self.skill_workspace_dir.clone())
@@ -282,9 +350,12 @@ impl HarnessService {
         .await?
     }
 
-    /// The agents currently linked to NeoB over MCP, i.e. the set a
+    /// The agents currently linked to this product over MCP, i.e. the set a
     /// newly authored skill links into by default.
     pub async fn connected_agents(&self) -> AppResult<BTreeSet<AgentId>> {
+        if self.read_only {
+            return Ok(BTreeSet::new());
+        }
         let _guard = self.mutex.lock().await;
         let manager = self.manager.clone();
         let workspace_dir = self.workspace_dir.clone();
@@ -364,7 +435,11 @@ impl HarnessService {
 
         match result {
             Ok((created, config_path, skill_warning)) => {
-                tracing::info!(harness = %harness, agent = %agent, "connected NeoB to harness");
+                tracing::info!(
+                    harness = %harness,
+                    agent = %agent,
+                    message = concat!("connected ", crate::product_name!(), " to harness")
+                );
                 if created {
                     self.analytics.capture(
                         events::HARNESS_CONNECTED,
@@ -440,7 +515,7 @@ impl HarnessService {
                     agent = %agent,
                     unlinked,
                     removed_manifest,
-                    "disconnected NeoB from harness"
+                    message = concat!("disconnected ", crate::product_name!(), " from harness")
                 );
                 if unlinked {
                     self.analytics.capture(
@@ -527,6 +602,9 @@ impl HarnessService {
     }
 
     pub async fn first_run_connect(&self, mcp_url: &str) -> AppResult<FirstRunConnectOutcome> {
+        if self.read_only {
+            return Ok(FirstRunConnectOutcome::default());
+        }
         let connections = self.list_browseros_connections().await?;
         let already_linked = connections.iter().filter(|state| state.installed).count();
         let Some(targets) = first_run_connect_targets(&connections) else {
@@ -550,6 +628,9 @@ impl HarnessService {
     }
 
     pub async fn run_integrity_scan(&self) -> AppResult<IntegrityScanOutcome> {
+        if self.read_only {
+            return Ok(IntegrityScanOutcome::default());
+        }
         let _guard = self.mutex.lock().await;
         let manager = self.manager.clone();
         let workspace_dir = self.workspace_dir.clone();
@@ -559,6 +640,9 @@ impl HarnessService {
     }
 
     pub async fn run_skill_reconciliation(&self) -> AppResult<SkillReconcileOutcome> {
+        if self.read_only {
+            return Ok(SkillReconcileOutcome::default());
+        }
         let guard = self.mutex.clone().lock_owned().await;
         let Some(managed_skill) = self.managed_skill.clone() else {
             return Ok(SkillReconcileOutcome::default());
@@ -575,10 +659,31 @@ impl HarnessService {
         .map_err(manager_app_error)
     }
 
+    pub async fn migrate_browseros_identity(
+        &self,
+        target_mcp_url: &str,
+    ) -> AppResult<IdentityMigrationOutcome> {
+        if self.read_only {
+            return Ok(IdentityMigrationOutcome::default());
+        }
+        let _guard = self.mutex.lock().await;
+        let manager = self.manager.clone();
+        let workspace_dir = self.workspace_dir.clone();
+        let target = target_mcp_url.to_string();
+        tokio::task::spawn_blocking(move || {
+            migrate_browseros_identity(&manager, &workspace_dir, &target)
+        })
+        .await?
+        .map_err(manager_app_error)
+    }
+
     pub async fn migrate_connected_urls(
         &self,
         target_mcp_url: &str,
     ) -> AppResult<UrlMigrationOutcome> {
+        if self.read_only {
+            return Ok(UrlMigrationOutcome::default());
+        }
         let _guard = self.mutex.lock().await;
         let manager = self.manager.clone();
         let workspace_dir = self.workspace_dir.clone();
@@ -662,8 +767,8 @@ fn reconcile_managed_skill(
         Err(error) => {
             // A damaged MCP manifest must not block baseline instructions. Defer
             // native/legacy cleanup because their consumers are currently unknown.
-            let mut outcome =
-                reconciler.repair_provisioned(&managed_skill.spec, &managed_skill.environment)?;
+            let mut outcome = reconciler
+                .repair_provisioned(managed_skill.current_spec(), &managed_skill.environment)?;
             outcome.warnings.push(SkillWarning {
                 target: workspace_dir.to_path_buf(),
                 message: format!(
@@ -673,7 +778,28 @@ fn reconcile_managed_skill(
             return Ok(outcome);
         }
     };
-    reconciler.reconcile(&managed_skill.spec, &consumers, &managed_skill.environment)
+    // Heal installs from before the skill directory was renamed: remove the legacy
+    // `browserclaw` directories (marker-verified) so the reconcile below replants the
+    // skill under its current `browseros-neo` name. Idempotent and a no-op once done.
+    let migrated = reconciler.remove_legacy_directories(
+        super::harness_skills::LEGACY_SKILL_DIRECTORY_NAME,
+        &managed_skill.environment,
+    )?;
+    if !migrated.is_empty() {
+        tracing::info!(
+            agents = ?migrated,
+            message = concat!(
+                "migrated legacy ",
+                crate::product_name!(),
+                " skill directories to the current name"
+            )
+        );
+    }
+    reconciler.reconcile(
+        managed_skill.current_spec(),
+        &consumers,
+        &managed_skill.environment,
+    )
 }
 
 fn reconcile_skill_warning(
@@ -703,7 +829,8 @@ fn reconcile_skill_warning(
 fn with_skill_retry_message(message: String, warning: Option<String>) -> String {
     match warning {
         Some(warning) => format!(
-            "{message} NeoB skill reconciliation needs a retry on restart or reconnect: {warning}"
+            "{message} {product} skill reconciliation needs a retry on restart or reconnect: {warning}",
+            product = crate::identity::DISPLAY_NAME
         ),
         None => message,
     }
@@ -786,6 +913,162 @@ fn deduplicate_browseros_links(links: Vec<ListedLink>) -> BTreeMap<AgentId, List
         }
     }
     by_agent
+}
+
+fn migrate_browseros_identity(
+    manager: &McpManager,
+    workspace_dir: &Path,
+    target_mcp_url: &str,
+) -> Result<IdentityMigrationOutcome, ManagerError> {
+    let managed_links = managed_browseros_links(manager, workspace_dir)?;
+    let mut outcome = IdentityMigrationOutcome::default();
+    for harness in Harness::ALL {
+        let agent = harness.agent_id();
+        match migrate_browseros_agent(
+            manager,
+            workspace_dir,
+            agent,
+            target_mcp_url,
+            &managed_links,
+        ) {
+            Ok(true) => {
+                outcome.migrated += 1;
+                tracing::info!(
+                    harness = %harness,
+                    agent = %agent,
+                    message = concat!("migrated ", crate::product_name!(), " MCP identity")
+                );
+            }
+            Ok(false) => outcome.skipped += 1,
+            Err(error) => {
+                outcome.failed += 1;
+                tracing::warn!(harness = %harness, agent = %agent, %error, "BrowserOS MCP identity migration failed");
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+fn migrate_browseros_agent(
+    manager: &McpManager,
+    workspace_dir: &Path,
+    agent: AgentId,
+    target_mcp_url: &str,
+    managed_links: &[ListedLink],
+) -> Result<bool, ManagerError> {
+    let mut destination_managed = managed_links
+        .iter()
+        .any(|link| link.agent == agent && link.server_name == BROWSEROS_MCP_SERVER_NAME);
+    let mut migrated = if destination_managed {
+        false
+    } else {
+        adopt_config_only_canonical(manager, workspace_dir, agent, target_mcp_url)?
+    };
+    destination_managed |= migrated;
+    for source_name in BROWSEROS_LEGACY_MCP_SERVER_NAMES {
+        let legacy_link = managed_links
+            .iter()
+            .find(|link| link.agent == agent && link.server_name == source_name);
+        let alias_migrated = migrate_browseros_alias(
+            manager,
+            workspace_dir,
+            agent,
+            target_mcp_url,
+            source_name,
+            legacy_link,
+            destination_managed,
+        )?;
+        migrated |= alias_migrated;
+        destination_managed |= alias_migrated;
+    }
+    Ok(migrated)
+}
+
+fn adopt_config_only_canonical(
+    manager: &McpManager,
+    workspace_dir: &Path,
+    agent: AgentId,
+    target_mcp_url: &str,
+) -> Result<bool, ManagerError> {
+    let entry =
+        match manager.inspect_entry(InspectEntryInput::new(BROWSEROS_MCP_SERVER_NAME, agent))? {
+            Some(entry) if is_historical_browseros_spec(&entry.spec) => entry,
+            _ => return Ok(false),
+        };
+    let mut input = LinkInput::new(
+        McpServer {
+            name: BROWSEROS_MCP_SERVER_NAME.to_string(),
+            spec: spec_for(agent, target_mcp_url)?,
+        },
+        agent,
+    );
+    input.config_path = Some(entry.config_path);
+    input.allow_overwrite = true;
+    with_legacy_manifest_migration(workspace_dir, || manager.link(input.clone()))
+        .map(|summary| summary.created)
+}
+
+fn migrate_browseros_alias(
+    manager: &McpManager,
+    workspace_dir: &Path,
+    agent: AgentId,
+    target_mcp_url: &str,
+    source_name: &str,
+    legacy_link: Option<&ListedLink>,
+    destination_managed: bool,
+) -> Result<bool, ManagerError> {
+    let unmanaged_source = if legacy_link.is_none() {
+        match manager.inspect_entry(InspectEntryInput::new(source_name, agent))? {
+            Some(entry) if is_historical_browseros_spec(&entry.spec) => Some(entry),
+            _ => return Ok(false),
+        }
+    } else {
+        None
+    };
+    let config_path = legacy_link
+        .map(|link| link.config_path.clone())
+        .or_else(|| {
+            unmanaged_source
+                .as_ref()
+                .map(|entry| entry.config_path.clone())
+        });
+    let allow_destination_overwrite = allow_canonical_destination_overwrite(
+        manager,
+        agent,
+        config_path.as_deref(),
+        destination_managed,
+    )?;
+    let mut input = MigrateServerInput::new(
+        source_name,
+        McpServer {
+            name: BROWSEROS_MCP_SERVER_NAME.to_string(),
+            spec: spec_for(agent, target_mcp_url)?,
+        },
+        agent,
+    );
+    input.config_path = config_path;
+    input.unmanaged_source_spec = unmanaged_source.map(|entry| entry.spec);
+    input.allow_destination_overwrite = allow_destination_overwrite;
+    with_legacy_manifest_migration(workspace_dir, || manager.migrate_server(input.clone()))
+        .map(|summary| summary.migrated)
+}
+
+fn allow_canonical_destination_overwrite(
+    manager: &McpManager,
+    agent: AgentId,
+    config_path: Option<&Path>,
+    destination_managed: bool,
+) -> Result<bool, ManagerError> {
+    if destination_managed {
+        return Ok(true);
+    }
+    let mut input = InspectEntryInput::new(BROWSEROS_MCP_SERVER_NAME, agent);
+    if let Some(config_path) = config_path {
+        input = input.at_path(config_path);
+    }
+    Ok(manager
+        .inspect_entry(input)?
+        .is_some_and(|entry| is_historical_browseros_spec(&entry.spec)))
 }
 
 fn is_historical_browseros_spec(spec: &McpServerSpec) -> bool {

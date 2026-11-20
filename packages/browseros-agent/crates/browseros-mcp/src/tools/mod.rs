@@ -1,27 +1,36 @@
-use crate::framework::{FeatureNote, ToolDef, ToolMetadata, input_schema, output_schema};
+use crate::framework::{
+    BrowserToolHandler, FeatureNote, OutputToolHandler, ToolDef, ToolHandler, ToolMetadata,
+    input_schema, output_schema,
+};
 use browseros_core::NativeFeature;
 use rmcp::model::ToolAnnotations;
 
 pub mod act;
 pub mod browser_profiles;
 pub mod browser_target;
+mod click_feedback;
+pub mod credentials;
 pub mod diff;
 pub mod download;
-pub mod evaluate;
+pub mod evaluate_in_page;
 pub mod grep;
 pub mod history;
 pub mod navigate;
 pub mod network;
 mod page_creation;
+pub mod payment_cards;
 pub mod pdf;
 pub mod read;
+pub mod read_output;
 pub mod run;
 pub mod screenshot;
+pub mod sensitive;
 pub mod snapshot;
 pub mod tab_groups;
 pub mod tabs;
 mod target_output_schema;
 pub mod upload;
+pub mod viewport;
 pub mod wait;
 pub mod windows;
 
@@ -33,6 +42,8 @@ pub fn catalog() -> Vec<ToolDef> {
         tabs::definition(),
         tab_groups::definition(),
         history::definition(),
+        credentials::definition(),
+        payment_cards::definition(),
         navigate::definition(),
         snapshot::definition(),
         diff::definition(),
@@ -40,12 +51,13 @@ pub fn catalog() -> Vec<ToolDef> {
         download::definition(),
         upload::definition(),
         read::definition(),
+        read_output::definition(),
         grep::definition(),
         screenshot::definition(),
         pdf::definition(),
         wait::definition(),
         windows::definition(),
-        evaluate::definition(),
+        evaluate_in_page::definition(),
         run::definition(),
         network::definition(),
     ]
@@ -63,11 +75,34 @@ fn def<T>(
     name: &'static str,
     description: &'static str,
     annotations: Option<ToolAnnotations>,
-    handler: crate::framework::ToolHandler,
+    handler: BrowserToolHandler,
 ) -> ToolDef
 where
     T: schemars::JsonSchema + std::any::Any,
 {
+    definition_with_handler::<T>(
+        name,
+        description,
+        annotations,
+        ToolHandler::Browser(handler),
+    )
+}
+
+fn output_def<T: schemars::JsonSchema + std::any::Any>(
+    name: &'static str,
+    description: &'static str,
+    annotations: Option<ToolAnnotations>,
+    handler: OutputToolHandler,
+) -> ToolDef {
+    definition_with_handler::<T>(name, description, annotations, ToolHandler::Output(handler))
+}
+
+fn definition_with_handler<T: schemars::JsonSchema + std::any::Any>(
+    name: &'static str,
+    description: &'static str,
+    annotations: Option<ToolAnnotations>,
+    handler: ToolHandler,
+) -> ToolDef {
     ToolDef {
         name,
         description,
@@ -84,21 +119,15 @@ fn def_with_output<T, O>(
     name: &'static str,
     description: &'static str,
     annotations: Option<ToolAnnotations>,
-    handler: crate::framework::ToolHandler,
+    handler: BrowserToolHandler,
 ) -> ToolDef
 where
     T: schemars::JsonSchema + std::any::Any,
     O: schemars::JsonSchema + std::any::Any,
 {
     ToolDef {
-        name,
-        description,
-        input_schema: input_schema::<T>(),
         output_schema: Some(output_schema::<O>()),
-        annotations,
-        metadata: metadata_for_tool(name),
-        feature_note: None,
-        handler,
+        ..def::<T>(name, description, annotations, handler)
     }
 }
 
@@ -114,12 +143,18 @@ fn metadata_for_tool(name: &str) -> ToolMetadata {
     ToolMetadata {
         // Both profile tools are hidden together on older natives: a saved selection cannot
         // block ordinary work there (capture runs it unbound), so get/clear are not needed.
-        requires: matches!(name, "browser_target" | "browser_profiles")
-            .then_some(NativeFeature::ProfileTargeting),
+        requires: match name {
+            "browser_target" | "browser_profiles" => Some(NativeFeature::ProfileTargeting),
+            "credentials" => Some(NativeFeature::Credentials),
+            "payment_cards" => Some(NativeFeature::PaymentCards),
+            _ => None,
+        },
         manages_target: matches!(name, "browser_target" | "browser_profiles"),
         accepts_page_arg: matches!(
             name,
-            "tabs"
+            "credentials"
+                | "payment_cards"
+                | "tabs"
                 | "navigate"
                 | "snapshot"
                 | "diff"
@@ -131,7 +166,8 @@ fn metadata_for_tool(name: &str) -> ToolMetadata {
                 | "screenshot"
                 | "pdf"
                 | "wait"
-                | "evaluate"
+                | "evaluate_in_page"
+                | "setViewport"
         ),
     }
 }

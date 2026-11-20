@@ -13,7 +13,7 @@
  */
 
 /**
- * User settings for the tools NeoB offers to agents.
+ * User settings for the tools BrowserOS neo offers to agents.
  * @export
  * @interface AgentSettings
  */
@@ -25,42 +25,11 @@ export interface AgentSettings {
      */
     humanHelpEnabled: boolean;
     /**
-     * Whether agents should close their task's tab groups when finished. Defaults to false.
+     * Whether successful MCP tool replies include a tip to close the task's tab group when finished.
      * @type {boolean}
      * @memberof AgentSettings
      */
-    closeTabGroupsAfterTask: boolean;
-    /**
-     *
-     * @type {JevTokenSource}
-     * @memberof AgentSettings
-     */
-    jevTokenSource: JevTokenSource;
-}
-
-/**
- * Where the decision model credential comes from, which decides whether the pursue tool is offered at all. "settings" is a token saved through this API, which takes precedence. "environment" is JEV_TOKEN in the server's environment. "none" means pursue is not offered. The token itself is never returned.
- * @export
- */
-export const JevTokenSource = {
-    Settings: 'settings',
-    Environment: 'environment',
-    None: 'none'
-} as const;
-export type JevTokenSource = typeof JevTokenSource[keyof typeof JevTokenSource];
-
-/**
- *
- * @export
- * @interface SaveJevTokenRequest
- */
-export interface SaveJevTokenRequest {
-    /**
-     * The decision model credential. Write only: no endpoint returns it. Saving one takes precedence over JEV_TOKEN in the server's environment.
-     * @type {string}
-     * @memberof SaveJevTokenRequest
-     */
-    token: string;
+    taskCleanupTipEnabled: boolean;
 }
 
 /**
@@ -96,17 +65,17 @@ export interface TelemetryState {
  */
 export interface UpdateAgentSettingsRequest {
     /**
-     *
+     * Omit to preserve the saved human help preference.
      * @type {boolean}
      * @memberof UpdateAgentSettingsRequest
      */
-    humanHelpEnabled: boolean;
+    humanHelpEnabled?: boolean;
     /**
-     * Whether to close task tab groups when finished. Omission preserves the current value.
+     * Omit to preserve the saved cleanup tip preference.
      * @type {boolean}
      * @memberof UpdateAgentSettingsRequest
      */
-    closeTabGroupsAfterTask?: boolean;
+    taskCleanupTipEnabled?: boolean;
 }
 
 /**

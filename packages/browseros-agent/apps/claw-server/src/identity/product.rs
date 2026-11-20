@@ -46,9 +46,12 @@ mod tests {
     fn slug_is_a_valid_skill_name() {
         assert!(SLUG.len() <= 64);
         assert!(!SLUG.is_empty());
-        assert!(SLUG
-            .split('-')
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())));
+        assert!(SLUG.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        }));
     }
 
     /// `/neob` must list the product skill and every saved skill in one namespace.

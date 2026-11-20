@@ -15,7 +15,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 AGENT="$REPO/packages/browseros-agent"
 DIST="$AGENT/dist/prod/claw-server"
-OUT="$HOME/Library/Application Support/NeoB/server/staging"
+OUT="${NEOB_STATE_ROOT:-$HOME/Library/Application Support/NeoB}/server/staging"
 KEEP_BACKUP=0
 
 while [ $# -gt 0 ]; do

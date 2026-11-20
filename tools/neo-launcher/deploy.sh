@@ -41,7 +41,7 @@ else
 fi
 : "${SERVER_PORT:=9310}"
 : "${CDP_PORT:=49350}"
-: "${NATIVE_VERSION:=0.51.1.2}"
+: "${NATIVE_VERSION:?config.env 缺少 NATIVE_VERSION：用 build-app.sh 从官方 Info.plist 生成}"
 
 # Health polling: 30 attempts with a half-second gap keeps the wait under 15 s while the
 # server's own integrity check runs in the background.

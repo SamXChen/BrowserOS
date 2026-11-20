@@ -18,46 +18,26 @@ UpdateTelemetryRequest:
       type: boolean
 AgentSettings:
   type: object
-  description: User settings for the tools NeoB offers to agents.
+  description: User settings for the tools BrowserOS neo offers to agents.
   additionalProperties: false
-  required: [humanHelpEnabled, closeTabGroupsAfterTask, jevTokenSource]
+  required: [humanHelpEnabled, taskCleanupTipEnabled]
   properties:
     humanHelpEnabled:
       type: boolean
       description: >-
         Whether agents are offered request_human_help and await_human_help. When false, agents
         are told to report a block in their own chat instead.
-    closeTabGroupsAfterTask:
+    taskCleanupTipEnabled:
       type: boolean
-      description: Whether agents should close their task's tab groups when finished. Defaults to false.
-    jevTokenSource:
-      $ref: '#/JevTokenSource'
-JevTokenSource:
-  type: string
-  enum: [settings, environment, none]
-  description: >-
-    Where the decision model credential comes from, which decides whether the pursue tool is
-    offered at all. "settings" is a token saved through this API, which takes precedence.
-    "environment" is JEV_TOKEN in the server's environment. "none" means pursue is not offered.
-    The token itself is never returned.
-SaveJevTokenRequest:
-  type: object
-  additionalProperties: false
-  required: [token]
-  properties:
-    token:
-      type: string
-      minLength: 1
-      description: >-
-        The decision model credential. Write only: no endpoint returns it. Saving one takes
-        precedence over JEV_TOKEN in the server's environment.
+      description: Whether successful MCP tool replies include a tip to close the task's tab group when finished.
 UpdateAgentSettingsRequest:
   type: object
   additionalProperties: false
-  required: [humanHelpEnabled]
+  minProperties: 1
   properties:
     humanHelpEnabled:
       type: boolean
-    closeTabGroupsAfterTask:
+      description: Omit to preserve the saved human help preference.
+    taskCleanupTipEnabled:
       type: boolean
-      description: Whether to close task tab groups when finished. Omission preserves the current value.
+      description: Omit to preserve the saved cleanup tip preference.

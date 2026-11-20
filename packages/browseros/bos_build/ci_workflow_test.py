@@ -205,7 +205,12 @@ class ChromiumBuildWorkflowTest(unittest.TestCase):
                     build_with["onboarding-version"],
                     "${{ inputs.onboarding_version || '' }}",
                 )
-                self.assertEqual(build_with["arch"], "x64")
+                self.assertEqual(
+                    build_with["arch"],
+                    "${{ matrix.arch }}"
+                    if workflow_name == "release-linux.yml"
+                    else "x64",
+                )
 
     def test_persistent_macos_lane_uses_one_source_build(self):
         workflow = self.load_workflow("release-macos.yml")
@@ -919,6 +924,7 @@ class ReleaseIntegrityWorkflowTest(unittest.TestCase):
     NEO_DISPATCH_INPUTS = {
         "platforms": ("choice", ["all", "macos", "linux", "windows"], "all"),
         "macos_arch": ("choice", ["universal", "arm64"], "universal"),
+        "linux_arch": ("choice", ["all", "x64", "arm64"], "all"),
         "publication": ("choice", ["alpha", "draft-only"], "alpha"),
     }
     NEO_ALPHA = "${{ needs.preflight.outputs.publication == 'alpha' }}"
@@ -1232,6 +1238,48 @@ class ReleaseIntegrityWorkflowTest(unittest.TestCase):
         )
         self.assertIn("needs.publish_alpha.result == 'success'", reflect["if"])
 
+    def test_version_reflection_targets_the_configured_source_repository(self):
+        # BrowserOS-internal mirrors this repository one way, so its releases
+        # must reflect versions into the repository it mirrors, not itself.
+        token = "${{ secrets.RELEASE_REFLECT_TOKEN || github.token }}"
+        default_branch = "${{ steps.source.outputs.default_branch }}"
+        for workflow_name in (
+            "release-server.yml",
+            "release-claw-server.yml",
+            "release-extensions.yml",
+            "release-app-onboard.yml",
+            "release-claw-onboard.yml",
+        ):
+            workflow = self.load_workflow(workflow_name)
+            reflect = workflow["jobs"]["reflect-version"]
+            source, checkout = reflect["steps"][:2]
+            publish = next(
+                step
+                for step in reflect["steps"]
+                if "merge-release-pr.sh" in step.get("run", "")
+            )
+            with self.subTest(workflow=workflow_name):
+                self.assertEqual(
+                    reflect["env"]["GH_REPO"],
+                    "${{ vars.RELEASE_REFLECT_REPO || github.repository }}",
+                )
+                self.assertEqual(source["id"], "source")
+                self.assertEqual(source["env"]["GH_TOKEN"], token)
+                self.assertIn('gh api "repos/$GH_REPO"', source["run"])
+                self.assertTrue(checkout["uses"].startswith("actions/checkout@"))
+                self.assertEqual(
+                    checkout["with"],
+                    {
+                        "fetch-depth": 0,
+                        "repository": "${{ env.GH_REPO }}",
+                        "ref": default_branch,
+                        "token": token,
+                    },
+                )
+                self.assertEqual(publish["env"]["GH_TOKEN"], token)
+                self.assertEqual(publish["env"]["DEFAULT_BRANCH"], default_branch)
+                self.assertNotIn("--repo", publish["run"])
+
     def test_reusable_components_have_one_validated_state_owner(self):
         for workflow_name in (
             "release-server.yml",
@@ -1528,6 +1576,7 @@ print(json.dumps({
             "release-browserclaw.yml",
             "release-server.yml",
             "release-claw-server.yml",
+            "release-docker.yml",
             "release-extensions.yml",
             "release-macos.yml",
         ):
@@ -1602,6 +1651,116 @@ print(json.dumps({
         self.assertEqual(keychain_cleanup["if"], "always()")
 
 
+class LinuxReleaseSelectionTest(unittest.TestCase):
+    """Execute the shipped planner before any expensive Chromium runner starts."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = yaml.safe_load(
+            (WORKFLOW_DIR / "release-linux.yml").read_text(encoding="utf-8")
+        )
+
+    def run_plan(
+        self, products: str, arch: str, mode: str = "published", *, pinned: bool = False,
+        resource_versions: dict[str, str] | None = None,
+    ):
+        step = self.workflow["jobs"]["plan"]["steps"][0]
+        self.assertNotIn("${{", step["run"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            output.touch()
+            result = subprocess.run(
+                [git_bash_path(), "-c", step["run"]],
+                env={
+                    **os.environ,
+                    "GITHUB_OUTPUT": str(output),
+                    "PRODUCTS": products,
+                    "ARCH": arch,
+                    "RESOURCE_MODE": mode,
+                    "SERVER_VERSION": "0.0.68" if pinned else "",
+                    "EXTENSION_VERSION": "0.2.30" if pinned else "",
+                    "ONBOARDING_VERSION": "0.1.0" if pinned else "",
+                    **(resource_versions or {}),
+                },
+                capture_output=True,
+                text=True,
+            )
+            outputs = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+        return result, outputs
+
+    def test_planner_expands_only_selected_products_and_architectures(self):
+        cases = (
+            ("browserclaw", "x64", [{"product": "browserclaw", "arch": "x64"}]),
+            ("browserclaw", "arm64", [{"product": "browserclaw", "arch": "arm64"}]),
+            ("browserclaw", "all", [
+                {"product": "browserclaw", "arch": "x64"},
+                {"product": "browserclaw", "arch": "arm64"},
+            ]),
+            ("all", "arm64", [
+                {"product": "browseros", "arch": "arm64"},
+                {"product": "browserclaw", "arch": "arm64"},
+            ]),
+        )
+        for products, arch, expected in cases:
+            with self.subTest(products=products, arch=arch):
+                result, outputs = self.run_plan(products, arch, pinned=arch == "all")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(outputs["matrix"]), expected)
+
+    def test_unsupported_selections_fail_before_emitting_a_matrix(self):
+        for products, arch, mode in (
+            ("browserclaw", "arm64;true", "published"),
+            ("browserclaw", "", "published"),
+            ("browserclaw;true", "arm64", "published"),
+            ("browserclaw", "arm64", "source"),
+            ("browserclaw", "all", "source"),
+            ("all", "x64", "source"),
+            ("browserclaw", "x64", "typo"),
+            ("browserclaw", "all", "published"),
+        ):
+            with self.subTest(products=products, arch=arch, mode=mode):
+                result, outputs = self.run_plan(products, arch, mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("::error::", result.stdout)
+                self.assertEqual(outputs, {})
+
+        result, outputs = self.run_plan("browserclaw", "x64", "source")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(outputs["matrix"]), [
+            {"product": "browserclaw", "arch": "x64"},
+        ])
+
+        result, outputs = self.run_plan("all", "all", pinned=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(outputs, {})
+
+    def test_dual_architectures_reject_mutable_resource_selectors(self):
+        for name in ("SERVER_VERSION", "EXTENSION_VERSION", "ONBOARDING_VERSION"):
+            for alias in ("latest", "alpha", "../latest"):
+                with self.subTest(name=name, alias=alias):
+                    result, outputs = self.run_plan(
+                        "browserclaw", "all", pinned=True,
+                        resource_versions={name: alias},
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("::error::", result.stdout)
+                    self.assertEqual(outputs, {})
+
+    def test_architecture_selection_and_metadata_ownership_are_explicit(self):
+        triggers = self.workflow.get("on", self.workflow.get(True))
+        dispatch = triggers["workflow_dispatch"]["inputs"]["arch"]
+        self.assertEqual(dispatch["options"], ["x64", "arm64", "all"])
+        self.assertEqual(dispatch["default"], "x64")
+        self.assertEqual(triggers["workflow_call"]["inputs"]["arch"]["default"], "x64")
+        build = self.workflow["jobs"]["build"]
+        # Architectures build on separate VMs; release.json uses an R2 CAS.
+        self.assertNotIn("max-parallel", build["strategy"])
+        self.assertEqual(build["with"]["arch"], "${{ matrix.arch }}")
+
+
 class NeoReleaseSelectionTest(unittest.TestCase):
     """Behavior of Neo's lane selection, draft gate and quiet test builds."""
 
@@ -1621,12 +1780,24 @@ class NeoReleaseSelectionTest(unittest.TestCase):
             if step.get("name") == step_name
         )
 
-    def run_selection(self, platforms: str, macos_arch: str, publication: str):
+    def run_selection(
+        self,
+        platforms: str,
+        macos_arch: str,
+        publication: str,
+        linux_arch: str | None = None,
+    ):
+        if linux_arch is None:
+            triggers = self.neo.get("on", self.neo.get(True))
+            linux_arch = str(
+                triggers["workflow_dispatch"]["inputs"]["linux_arch"]["default"]
+            )
         step = self.step(self.neo, "preflight", "Validate release selection")
         self.assertEqual(
             step["env"],
             {
                 "MACOS_ARCH": "${{ inputs.macos_arch }}",
+                "LINUX_ARCH": "${{ inputs.linux_arch }}",
                 "PLATFORMS": "${{ inputs.platforms }}",
                 "PUBLICATION": "${{ inputs.publication }}",
             },
@@ -1641,6 +1812,7 @@ class NeoReleaseSelectionTest(unittest.TestCase):
                     **os.environ,
                     "GITHUB_OUTPUT": str(output),
                     "MACOS_ARCH": macos_arch,
+                    "LINUX_ARCH": linux_arch,
                     "PLATFORMS": platforms,
                     "PUBLICATION": publication,
                 },
@@ -1664,6 +1836,7 @@ class NeoReleaseSelectionTest(unittest.TestCase):
                 "build_macos": "true",
                 "build_windows": "true",
                 "macos_arch": "universal",
+                "linux_arch": "all",
                 "platforms": "all",
                 "publication": "alpha",
             },
@@ -1680,10 +1853,43 @@ class NeoReleaseSelectionTest(unittest.TestCase):
                 "build_macos": "true",
                 "build_windows": "false",
                 "macos_arch": "arm64",
+                "linux_arch": "all",
                 "platforms": "macos",
                 "publication": "draft-only",
             },
         )
+
+    def test_preflight_selects_linux_arm64_and_forwards_the_same_contract(self):
+        for arch in ("arm64", "all"):
+            result, outputs = self.run_selection(
+                "linux", "universal", "draft-only", arch
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(outputs["linux_arch"], arch)
+            self.assertEqual(outputs["build_linux"], "true")
+            self.assertEqual(outputs["build_macos"], "false")
+            self.assertEqual(outputs["build_windows"], "false")
+
+        linux = self.neo["jobs"]["linux"]
+        self.assertEqual(
+            linux["with"]["arch"], "${{ needs.preflight.outputs.linux_arch }}"
+        )
+        finalize = self.step(self.neo, "finalize", "Create or refresh browser draft")
+        self.assertEqual(
+            finalize["env"]["LINUX_ARCH"], "${{ needs.preflight.outputs.linux_arch }}"
+        )
+        self.assertIn('--linux-arch "$LINUX_ARCH"', finalize["run"])
+
+    def test_preflight_rejects_unused_or_invalid_linux_architecture(self):
+        for platforms, arch in (
+            ("macos", "arm64"),
+            ("windows", "arm64"),
+            ("linux", "bad;true"),
+        ):
+            result, outputs = self.run_selection(platforms, "universal", "alpha", arch)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("::error::", result.stdout)
+            self.assertEqual(outputs, {})
 
     def test_preflight_rejects_unsupported_or_meaningless_requests(self):
         cases = (
@@ -3672,6 +3878,285 @@ class RepairUpdateFeedWorkflowTest(unittest.TestCase):
         self.assertIn("args+=(--publish)", publish)
         self.assertIn('release feeds publish-local "${args[@]}"', publish)
         self.assertNotIn("--allow-downgrade", publish)
+
+
+
+class DockerImageWorkflowTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = yaml.safe_load(
+            (WORKFLOW_DIR / "release-docker.yml").read_text(encoding="utf-8")
+        )
+        self.jobs = self.workflow["jobs"]
+
+    def test_only_jobs_that_push_images_can_write_packages(self):
+        # verify pushes the image it tested by digest; publish names it.
+        self.assertEqual(self.workflow["permissions"], {})
+        for name, job in self.jobs.items():
+            self.assertEqual(
+                job["permissions"].get("packages"),
+                "write" if name in ("verify", "publish") else None,
+            )
+
+    def test_server_builds_on_warpbuild_with_a_cargo_cache_and_a_queue_watchdog(self):
+        server = self.jobs["server"]
+        self.assertEqual(server["runs-on"], "warp-custom-browseros-ubuntu-2204-x64-32x")
+        self.assertIn("timeout-minutes", server)
+        cache = next(step for step in server["steps"]
+                     if step.get("uses", "").startswith("Swatinem/rust-cache@"))
+        self.assertEqual(cache["with"]["cache-provider"], "warpbuild")
+        # With no shared build-dir, CARGO_TARGET_DIR holds everything worth caching.
+        self.assertEqual(
+            cache["with"]["workspaces"],
+            "packages/browseros-agent -> ../../target/neo-docker",
+        )
+        self.assertEqual(cache["with"]["prefix-key"], "browseros-target-v1")
+        self.assertNotIn("cache-directories", cache["with"])
+        self.assertEqual(cache["with"]["shared-key"], "neo-docker-${{ matrix.rust_target }}")
+        # Without the environment hash the key ignores Cargo.lock and never refreshes.
+        self.assertNotIn("add-rust-environment-hash-key", cache["with"])
+        watchdog = self.jobs["queue-watchdog"]["steps"][0]["env"]
+        self.assertEqual(watchdog["RUNNER_LABEL"], server["runs-on"])
+        self.assertEqual(watchdog["CONCURRENCY_GROUP"], self.workflow["concurrency"]["group"])
+
+    def test_verify_checks_the_image_runs_this_commits_server_before_smoke(self):
+        steps = self.jobs["verify"]["steps"]
+        names = [step.get("name") for step in steps]
+        check = names.index("Check the image runs this commit's server")
+        self.assertLess(names.index("Build native image"), check)
+        self.assertLess(check, next(i for i, step in enumerate(steps) if step.get("id") == "smoke"))
+        run = steps[check]["run"]
+        self.assertIn('sha256sum "$RUNNER_TEMP/neo-servers/$ARCH/browseros-claw-server-rs"', run)
+        self.assertIn("find /usr/lib /opt -type f -name browseros-claw-server", run)
+
+    def test_publish_tags_the_images_verify_tested_without_building(self):
+        steps = self.jobs["verify"]["steps"]
+        names = [step.get("name") for step in steps]
+        smoke = next(i for i, step in enumerate(steps) if step.get("id") == "smoke")
+        push = names.index("Push the tested image by digest")
+        self.assertLess(smoke, push)
+        self.assertEqual(steps[push]["if"], "inputs.push")
+        self.assertIn("--push-by-digest", steps[push]["run"])
+        self.assertLess(push, names.index("Check the pushed image is the one tested"))
+
+        publish = self.jobs["publish"]
+        self.assertEqual(publish["needs"], "verify")
+        self.assertNotIn("environment", publish)
+        uses = [step.get("uses", "") for step in publish["steps"]]
+        self.assertFalse(any(use.startswith("docker/setup-qemu-action") for use in uses))
+        tag = next(step for step in publish["steps"]
+                   if step.get("name") == "Tag the tested amd64 and arm64 images")
+        self.assertIn('--from-digests "$RUNNER_TEMP/neo-digests"', tag["run"])
+        self.assertNotIn("--server-dir", tag["run"])
+
+    def test_native_smoke_checks_on_both_architectures_gate_publication(self):
+        verify = self.jobs["verify"]
+        self.assertEqual(verify["runs-on"], "${{ matrix.runner }}")
+        self.assertEqual(verify["strategy"]["matrix"]["include"], [
+            {"arch": "amd64", "runner": "ubuntu-latest"},
+            {"arch": "arm64", "runner": "ubuntu-24.04-arm"},
+        ])
+        self.assertIn("verify", self.jobs["publish"]["needs"])
+        steps = {step.get("name"): step for step in verify["steps"]}
+        self.assertNotIn("--push", steps["Build native image"]["run"])
+        smoke = next(step for step in verify["steps"] if step.get("id") == "smoke")
+        self.assertIn("for hosted in 1 0", smoke["run"])
+        self.assertIn("for extensions_disabled in false true", smoke["run"])
+        self.assertIn("< packages/browseros/docker/neo/check_extensions.py", smoke["run"])
+        self.assertIn('captcha_smoke.py "http://127.0.0.1:$port" "$hosted" "$KEYED"', smoke["run"])
+        self.assertEqual(self.jobs["publish"]["if"], "inputs.push")
+
+    def test_keyed_jobs_scope_secrets_to_preparation_and_always_clean_files(self):
+        # Only verify builds an image, so only verify holds provider keys.
+        job = self.jobs["verify"]
+        self.assertEqual(job["environment"], "neo-captcha")
+        self.assertNotIn("CAPSOLVER_API_KEY", job.get("env", {}))
+        self.assertNotIn("TWOCAPTCHA_API_KEY", job.get("env", {}))
+        cleanup = job["steps"][-1]
+        self.assertEqual(cleanup["if"], "always()")
+        self.assertIn('rm -f "$RUNNER_TEMP/neo-capsolver-key" "$RUNNER_TEMP/neo-2captcha-key"', cleanup["run"])
+        for name, other in self.jobs.items():
+            if name != "verify":
+                self.assertNotIn("CAPSOLVER_API_KEY", str(other))
+                self.assertNotIn("TWOCAPTCHA_API_KEY", str(other))
+
+    def test_server_override_preserves_production_telemetry_configuration(self):
+        build = next(step for step in self.jobs["server"]["steps"]
+                     if step.get("name") == "Build this commit's server")
+        self.assertEqual(build["env"]["CLAW_POSTHOG_KEY"], "${{ secrets.CLAW_POSTHOG_KEY }}")
+        self.assertEqual(build["env"]["CLAW_SENTRY_DSN"], "${{ secrets.CLAW_SENTRY_DSN }}")
+        self.assertIn('if [ -z "$CLAW_POSTHOG_KEY" ]', build["run"])
+
+    def test_inputs_reach_shell_only_through_environment(self):
+        for job in self.jobs.values():
+            for step in job["steps"]:
+                self.assertNotIn("${{ inputs.", step.get("run", ""))
+
+
+
+class NeoSdkImageWorkflowTest(unittest.TestCase):
+    """The Neo SDK image's workflow: build and accept on every input change, publish only when
+    asked on a protected branch, with the CAPTCHA keys, and only to the SDK's own image, never
+    production's (ghcr.io/browseros-ai/neo)."""
+
+    def setUp(self):
+        self.path = WORKFLOW_DIR / "neo-sdk-image.yml"
+        self.text = self.path.read_text(encoding="utf-8")
+        self.workflow = yaml.safe_load(self.text)
+        # PyYAML reads the bare `on` key as the boolean True.
+        self.on = self.workflow.get("on", self.workflow.get(True))
+        self.jobs = self.workflow["jobs"]
+
+    def decide(self, **env: str) -> subprocess.CompletedProcess:
+        """Runs the preflight's decision script as GitHub would, with these event values."""
+        step = next(s for s in self.jobs["preflight"]["steps"] if s.get("id") == "decide")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output"
+            output.touch()
+            values = {
+                "EVENT": "",
+                "REF": "",
+                "REF_TYPE": "branch",
+                "REF_PROTECTED": "false",
+                "PUBLISH": "",
+                "CONFIRM": "",
+                **env,
+            }
+            result = subprocess.run(
+                [git_bash_path(), "-c", step["run"]],
+                env={**os.environ, **values, "GITHUB_OUTPUT": str(output)},
+                capture_output=True,
+                text=True,
+            )
+            result.stdout = output.read_text()
+        return result
+
+    def test_builds_and_tests_on_every_change_to_the_images_inputs(self):
+        expected = {
+            "packages/browseros-agent/Cargo.toml",
+            "packages/browseros-agent/Cargo.lock",
+            "packages/browseros-agent/crates/**",
+            # The CAPTCHA test bed sits under crates/ but is no build input (Dockerfile.dockerignore).
+            "!packages/browseros-agent/crates/neo-sdk/neo-captcha/testbed/**",
+            "packages/browseros-agent/apps/claw-server/**",
+            ".github/workflows/neo-sdk-image.yml",
+        }
+        self.assertEqual(set(self.on["pull_request"]["paths"]), expected)
+        self.assertEqual(set(self.on["push"]["paths"]), expected)
+        # The CAPTCHA keys' environment admits protected branches only, never a tag: no tag path.
+        self.assertNotIn("tags", self.on["push"])
+
+    def test_publishes_only_on_a_confirmed_manual_run_on_a_protected_branch(self):
+        main = {"REF": "refs/heads/main", "REF_TYPE": "branch", "REF_PROTECTED": "true"}
+        cases = [
+            ({"EVENT": "pull_request", "REF": "refs/pull/1/merge"}, "publish=false"),
+            ({"EVENT": "push", **main}, "publish=false"),
+            ({"EVENT": "push", "REF": "refs/heads/feat/claw-sdk"}, "publish=false"),
+            ({"EVENT": "push", "REF": "refs/tags/neo-sdk-v0.1.0", "REF_TYPE": "tag"}, "publish=false"),
+            ({"EVENT": "workflow_dispatch", **main, "PUBLISH": "false"}, "publish=false"),
+            ({"EVENT": "workflow_dispatch", **main, "PUBLISH": "true", "CONFIRM": "neo-sdk"}, "publish=true"),
+        ]
+        for env, expected in cases:
+            with self.subTest(env=env):
+                result = self.decide(**env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        refusals = [
+            {"EVENT": "workflow_dispatch", **main, "PUBLISH": "true", "CONFIRM": "yes"},
+            # The keys' environment would not admit these refs: refused before anything is built.
+            {"EVENT": "workflow_dispatch", "REF": "refs/heads/publish/x", "PUBLISH": "true", "CONFIRM": "neo-sdk"},
+            {
+                "EVENT": "workflow_dispatch",
+                "REF": "refs/tags/neo-sdk-v0.1.0",
+                "REF_TYPE": "tag",
+                "REF_PROTECTED": "true",
+                "PUBLISH": "true",
+                "CONFIRM": "neo-sdk",
+            },
+        ]
+        for env in refusals:
+            with self.subTest(refused=env):
+                refused = self.decide(**env)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertEqual(refused.stdout.strip(), "")
+
+    def test_the_keys_environment_is_named_only_by_a_publishing_run(self):
+        image = self.jobs["image"]
+        self.assertEqual(
+            image["environment"], "${{ needs.preflight.outputs.publish == 'true' && 'neo-captcha' || '' }}"
+        )
+        self.assertEqual([name for name, job in self.jobs.items() if "environment" in job], ["image"])
+        keys = next(step for step in image["steps"] if step.get("id") == "keys")
+        self.assertEqual(keys["if"], "needs.preflight.outputs.publish == 'true'")
+        self.assertEqual(
+            keys["env"],
+            {
+                "CAPSOLVER_API_KEY": "${{ secrets.CAPSOLVER_API_KEY }}",
+                "TWOCAPTCHA_API_KEY": "${{ secrets.TWOCAPTCHA_API_KEY }}",
+            },
+        )
+        # No other step reads the keys; their files stay out of the uploaded log folder and are
+        # removed whatever happens; an image without both keys is never pushed.
+        self.assertEqual(self.text.count("secrets.CAPSOLVER_API_KEY"), 1)
+        self.assertEqual(self.text.count("secrets.TWOCAPTCHA_API_KEY"), 1)
+        self.assertIn("umask 077", keys["run"])
+        self.assertIn('keys="$RUNNER_TEMP/neo-sdk-keys"', keys["run"])
+        cleanup = next(step for step in image["steps"] if step.get("name") == "Remove the CAPTCHA key files")
+        self.assertEqual(cleanup["if"], "always()")
+        self.assertIn('rm -rf "$RUNNER_TEMP/neo-sdk-keys"', cleanup["run"])
+        push = next(step for step in image["steps"] if step.get("name") == "Push the accepted image")
+        self.assertIn('.captchaKeys == ["capsolver", "2captcha"]', push["run"])
+
+    def test_publishing_runs_have_their_own_concurrency_group(self):
+        self.assertEqual(
+            self.workflow["concurrency"]["group"],
+            "${{ github.event_name == 'workflow_dispatch' && inputs.publish && 'neo-sdk-image-publish' || "
+            "format('neo-sdk-image-{0}', github.ref) }}",
+        )
+        self.assertEqual(
+            self.workflow["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}"
+        )
+
+    def test_nothing_is_pushed_before_every_check_passed(self):
+        self.assertEqual(set(self.jobs["image"]["needs"]), {"preflight", "scripts"})
+        self.assertEqual(set(self.jobs["publish"]["needs"]), {"preflight", "image"})
+
+    def test_every_registry_step_waits_for_the_publish_decision(self):
+        for name, job in self.jobs.items():
+            for step in job.get("steps", []):
+                touches_registry = "docker/login-action" in step.get("uses", "") or re.search(
+                    r"docker (push|buildx imagetools create)", step.get("run", "")
+                )
+                if not touches_registry:
+                    continue
+                with self.subTest(job=name, step=step.get("name", step.get("uses"))):
+                    guard = step.get("if") or job.get("if")
+                    self.assertEqual(guard, "needs.preflight.outputs.publish == 'true'")
+
+    def test_pushes_only_the_sdk_image_never_productions(self):
+        self.assertEqual(self.workflow["env"]["IMAGE"], "ghcr.io/browseros-ai/neo-sdk")
+        # The comments name production's image to say this is not it; the steps may not.
+        code = "\n".join(line for line in self.text.splitlines() if not line.lstrip().startswith("#"))
+        names = set(re.findall(r"ghcr\.io/[a-z0-9/_-]+", code))
+        self.assertEqual(names, {"ghcr.io/browseros-ai/neo-sdk"})
+        self.assertNotIn("latest", re.findall(r"\$IMAGE:([A-Za-z0-9_${}.-]+)", self.text))
+
+    def test_builds_and_accepts_each_architecture_natively_and_runs_the_scripts_tests(self):
+        matrix = self.jobs["image"]["strategy"]["matrix"]["include"]
+        self.assertEqual(
+            {(entry["arch"], entry["runner"]) for entry in matrix},
+            {("amd64", "ubuntu-24.04"), ("arm64", "ubuntu-24.04-arm")},
+        )
+        runs = "\n".join(step.get("run", "") for step in self.jobs["image"]["steps"])
+        self.assertIn('docker/build.sh --platform "linux/$ARCH"', runs)
+        self.assertIn("docker/accept.sh", runs)
+        scripts = "\n".join(step.get("run", "") for step in self.jobs["scripts"]["steps"])
+        self.assertIn('discover -s supervisor -p "*_test.py"', scripts)
+        self.assertIn("ruff check", scripts)
+
+    def test_changes_trigger_build_system_tests(self):
+        build_tests = yaml.safe_load((WORKFLOW_DIR / "bos-build-tests.yml").read_text(encoding="utf-8"))
+        on = build_tests.get("on", build_tests.get(True))
+        self.assertIn(".github/workflows/neo-sdk-image.yml", on["pull_request"]["paths"])
 
 
 if __name__ == "__main__":

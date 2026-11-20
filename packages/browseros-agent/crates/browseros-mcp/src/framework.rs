@@ -10,16 +10,49 @@ use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool, ToolAnnotation
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-pub type OutputFileAccess = Arc<Mutex<HashSet<PathBuf>>>;
-pub type ToolHandler = for<'a> fn(
+/// Compatibility name for callers supplying a logical session's output store.
+pub type OutputFileAccess = crate::output_store::OutputStore;
+pub type BrowserToolHandler = for<'a> fn(
     Value,
     &'a ToolCtx,
     &'a mut ToolResponse,
 ) -> BoxFuture<'a, ToolExecResult<Option<ToolResult>>>;
+pub type OutputToolHandler =
+    for<'a> fn(Value, &'a OutputFileAccess) -> BoxFuture<'a, ToolExecResult<ToolResult>>;
+
+/// The handler declares its real dependencies. Output readers cannot accidentally
+/// load a profile, require a browser connection, or start another output collection.
+#[derive(Clone, Copy)]
+pub enum ToolHandler {
+    Browser(BrowserToolHandler),
+    Output(OutputToolHandler),
+}
+
+/// Available execution dependencies at the host seam. Browser calls and nested SDK
+/// calls keep their captured ToolCtx; output-only execution carries no browser view.
+pub enum ToolExecution<'a> {
+    Browser(&'a ToolCtx),
+    Outputs(&'a OutputFileAccess),
+}
+
+impl<'a> From<&'a ToolCtx> for ToolExecution<'a> {
+    fn from(ctx: &'a ToolCtx) -> Self {
+        Self::Browser(ctx)
+    }
+}
+
+impl ToolExecution<'_> {
+    fn output_files(&self) -> &OutputFileAccess {
+        match self {
+            Self::Browser(ctx) => &ctx.output_files,
+            Self::Outputs(outputs) => outputs,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct BrowserToolDefaults {
@@ -134,6 +167,12 @@ pub struct ToolCtx {
     pub preloaded_helpers: Vec<HelperSource>,
     /// See [`BrowserToolOptions::network`].
     pub network: Option<Arc<dyn NetworkHost>>,
+    /// Set for calls a `run` script makes. Their results go to the script, not the model, so
+    /// tools hand back the whole value instead of an inline excerpt plus a file the script
+    /// cannot open; what the script returns is capped on its way to the model instead.
+    pub within_script: bool,
+    /// Process-fixed budget captured by this request and all its nested SDK calls.
+    pub run_policy: crate::RunPolicy,
 }
 
 impl ToolCtx {
@@ -148,7 +187,16 @@ impl ToolCtx {
             inner_call_hook: options.inner_call_hook,
             preloaded_helpers: options.preloaded_helpers,
             network: options.network,
+            within_script: false,
+            run_policy: crate::RunPolicy::default(),
         }
+    }
+
+    /// Apply the host's already-resolved budget; the MCP crate never reads deployment files.
+    #[must_use]
+    pub fn with_run_policy(mut self, policy: crate::RunPolicy) -> Self {
+        self.run_policy = policy;
+        self
     }
 
     pub fn throw_if_cancelled(&self) -> ToolExecResult<()> {
@@ -201,6 +249,18 @@ pub trait NetworkHost: Send + Sync {
 /// only for operations the host selects. `browseros-mcp` cannot reach the host's guards
 /// or audit store, so the host supplies this through [`ToolCtx::inner_call_hook`].
 pub trait InnerCallHook: Send + Sync {
+    /// Marks password- or card-bearing script input before authorization or
+    /// dispatch can fail. Hosts suppress parent source/audit previews even after
+    /// cancellation.
+    fn mark_sensitive_input(&self) {}
+
+    /// Holds `page` out of host screenshots before a primitive fills a card
+    /// into it. Called before dispatch, so a capture during the fill or a
+    /// cancelled run never leaves the filled number unguarded.
+    fn hold_card_data<'a>(&'a self, _page: u32) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
     /// Authorize a primitive about to run against the caller's ownership.
     /// `page` is the primitive's target page id, when it addresses one.
     /// `Err(reason)` rejects the primitive and the reason is surfaced to the
@@ -285,6 +345,8 @@ pub struct InnerCallRecord<'a> {
     pub from_helper: bool,
     /// Whether the primitive failed.
     pub is_error: bool,
+    /// Safe presentation state only; never pass native handles or file paths to the audit.
+    pub file_chooser_open: bool,
     /// Wall-clock duration of the primitive in milliseconds.
     pub duration_ms: i64,
     /// Estimated output tokens of the primitive's result payload (v1 estimator),
@@ -315,6 +377,10 @@ pub struct FeatureNote {
 }
 
 impl ToolDef {
+    #[must_use]
+    pub fn requires_browser(&self) -> bool {
+        matches!(self.handler, ToolHandler::Browser(_))
+    }
     /// Whether discovery should offer this tool for the connected native. Hidden tools stay
     /// in the catalog (stable `get_tool` schemas for cached clients); `execute_tool` refuses
     /// them, so a list is a hint and the refusal is the authority.
@@ -365,11 +431,36 @@ pub struct ToolMetadata {
     pub requires: Option<NativeFeature>,
 }
 
+/// Internal, host-only hints a tool emits so the claw-server audit layer can keep
+/// secrets out of the ledger. Never serialized to the client: `into_call_tool_result`
+/// does not copy it, so it rides only on the in-process `ToolResult`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditHints {
+    /// Refs whose value must be redacted from `args_json` (matches the top-level
+    /// `ref` or a `fields[]` entry's `ref`).
+    pub sensitive_refs: Vec<String>,
+    /// Redact every `value`/`text`/`fields[].value` regardless of ref, and script
+    /// `code` at the host audit boundary. Explicit passwords are always redacted.
+    /// Set when the target has no ref or the source itself may contain secrets.
+    pub redact_all_values: bool,
+    /// Skip the audit screenshot for this dispatch.
+    pub skip_screenshot: bool,
+}
+
+impl AuditHints {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.sensitive_refs.is_empty() && !self.redact_all_values && !self.skip_screenshot
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub content: Vec<ContentBlock>,
     pub is_error: bool,
     pub structured_content: Option<Value>,
+    /// Host-only audit hints. Not sent to the client (see `AuditHints`).
+    pub audit_hints: Option<AuditHints>,
 }
 
 impl ToolResult {
@@ -379,6 +470,7 @@ impl ToolResult {
             content: vec![ContentBlock::text(text)],
             is_error: false,
             structured_content,
+            audit_hints: None,
         }
     }
 
@@ -388,6 +480,7 @@ impl ToolResult {
             content: vec![ContentBlock::image(data, mime_type)],
             is_error: false,
             structured_content: Some(structured),
+            audit_hints: None,
         }
     }
 
@@ -397,6 +490,7 @@ impl ToolResult {
             content: vec![ContentBlock::text(message)],
             is_error: true,
             structured_content: None,
+            audit_hints: None,
         }
     }
 
@@ -417,12 +511,16 @@ pub type ToolExecResult<T> = Result<T, ToolError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
+    #[error("tool requires a connected browser")]
+    BrowserRequired,
     #[error("cancelled")]
     Cancelled,
     #[error("invalid arguments")]
     InvalidArguments(Vec<ArgIssue>),
     #[error("{0}")]
     Message(String),
+    #[error(transparent)]
+    Core(#[from] CoreError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,12 +536,6 @@ impl ToolError {
     }
 }
 
-impl From<CoreError> for ToolError {
-    fn from(value: CoreError) -> Self {
-        Self::Message(value.to_string())
-    }
-}
-
 impl From<serde_json::Error> for ToolError {
     fn from(value: serde_json::Error) -> Self {
         Self::Message(value.to_string())
@@ -456,8 +548,86 @@ impl From<std::io::Error> for ToolError {
     }
 }
 
-pub async fn execute_tool(
+pub async fn execute_tool<'a>(
     def: &ToolDef,
+    raw_args: Value,
+    execution: impl Into<ToolExecution<'a>> + Send,
+) -> ToolExecResult<ToolResult> {
+    let execution = execution.into();
+    let handler = match def.handler {
+        ToolHandler::Output(handler) => return handler(raw_args, execution.output_files()).await,
+        ToolHandler::Browser(handler) => handler,
+    };
+    let ToolExecution::Browser(ctx) = execution else {
+        return Err(ToolError::BrowserRequired);
+    };
+    let mut call_ctx = ctx.clone();
+    if !ctx.within_script {
+        call_ctx.output_files = ctx.output_files.begin_call();
+    }
+    let mut result = execute_tool_inner(def, handler, raw_args, &call_ctx).await?;
+    if crate::tools::sensitive::is_sensitive_tool(def.name) {
+        result.audit_hints = Some(AuditHints {
+            redact_all_values: true,
+            skip_screenshot: true,
+            ..result.audit_hints.unwrap_or_default()
+        });
+    }
+    if !ctx.within_script {
+        // Nested calls keep typed parts and image captures in this request's collector.
+        // Forward actual images once, including captures a script did not return as JSON.
+        for image in call_ctx.output_files.images().await {
+            if !result.content.iter().any(|block| {
+                block
+                    .as_image()
+                    .is_some_and(|existing| existing.data == image.data)
+            }) {
+                result
+                    .content
+                    .push(ContentBlock::image(image.data, image.mime_type));
+            }
+        }
+        let omitted = call_ctx.output_files.omitted_images().await;
+        if omitted > 0 {
+            result.content.push(ContentBlock::text(format!(
+                "{omitted} additional screenshots were saved; use read_output to retrieve them."
+            )));
+        }
+        let primary = json!({ "isError": result.is_error, "structuredContent": result.structured_content, "text": result.content.iter().filter_map(|block| block.as_text().map(|text| &text.text)).collect::<Vec<_>>() });
+        match call_ctx.output_files.finish(&primary).await {
+            Ok(Some(output)) => {
+                for warning in &output.warnings {
+                    result.content.push(ContentBlock::text(warning));
+                }
+                if !output.warnings.is_empty() {
+                    merge_structured(
+                        &mut result.structured_content,
+                        json!({ "outputWriteFailed": true }),
+                    );
+                }
+                result.content.push(ContentBlock::text(format!("[Saved output: {}. Use read_output with outputId and part; omit part to list parts.]", output.id)));
+                merge_structured(&mut result.structured_content, json!({ "output": output }));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                // The browser action may already have committed. Report incomplete output
+                // explicitly without relabelling a successful action as safe to retry.
+                result.content.push(ContentBlock::text(format!(
+                    "Could not publish complete saved output: {error}"
+                )));
+                merge_structured(
+                    &mut result.structured_content,
+                    json!({ "outputWriteFailed": true }),
+                );
+            }
+        }
+    }
+    Ok(result)
+}
+
+async fn execute_tool_inner(
+    def: &ToolDef,
+    handler: BrowserToolHandler,
     raw_args: Value,
     ctx: &ToolCtx,
 ) -> ToolExecResult<ToolResult> {
@@ -497,8 +667,23 @@ pub async fn execute_tool(
         None
     };
     ctx.throw_if_cancelled()?;
+    // A tab in a fixed viewport gets back a mode it lost before the tool reads or acts, and is
+    // held until the readback is done. setViewport applies its own; tab management needs none.
+    let viewport = match &primary_page {
+        Some(page) if restores_viewport(def.name) => {
+            tokio::select! {
+                biased;
+                () = ctx.cancel.cancelled() => return Err(ToolError::Cancelled),
+                lease = ctx.browser.prepare_viewport(page.clone()) => match lease {
+                    Ok(lease) => Some(lease),
+                    Err(err) => return Ok(ToolResult::error(format!("{} failed: {err}", def.name))),
+                },
+            }
+        }
+        _ => None,
+    };
     let mut response = ToolResponse::new();
-    match (def.handler)(raw_args, ctx, &mut response).await {
+    match handler(raw_args, ctx, &mut response).await {
         Ok(Some(result)) => response.append_result(result),
         Ok(None) => {}
         Err(ToolError::InvalidArguments(issues)) => {
@@ -507,7 +692,31 @@ pub async fn execute_tool(
             )));
         }
         Err(ToolError::Cancelled) => return Err(ToolError::Cancelled),
-        Err(err) => response.error(format!("{} failed: {err}", def.name)),
+        Err(err) => {
+            // Preserve actionable click recovery in structured MCP output as
+            // well as text. The SDK bridge carries the same ref in its exception.
+            if let ToolError::Core(error) = &err {
+                let preparation = match error {
+                    CoreError::ClickFallbackUnavailable { native, .. } => native.as_ref(),
+                    other => other,
+                };
+                match preparation {
+                    CoreError::ElementCovered {
+                        blocker,
+                        blocker_ref,
+                        ..
+                    } => {
+                        response.click_data(json!({ "status": "blocked", "sent": false,
+                            "blocker": { "description": blocker, "ref": blocker_ref } }));
+                    }
+                    CoreError::ClickOutcomeUnknown(_) => {
+                        response.click_data(json!({ "status": "unknown", "retryable": false }));
+                    }
+                    _ => {}
+                }
+            }
+            response.error(format!("{} failed: {err}", def.name));
+        }
     }
     ctx.throw_if_cancelled()?;
     let mut result = response.build_for_session(ctx, primary_page).await?;
@@ -521,8 +730,13 @@ pub async fn execute_tool(
     let result = result.into_tool_result();
     // The script bridge records its child audit only after execute_tool returns.
     // Releasing here prevents host audit work from retaining an operation lock.
+    drop(viewport);
     drop(tool_guard);
     Ok(result)
+}
+
+fn restores_viewport(tool: &str) -> bool {
+    !matches!(tool, "tabs" | tools::viewport::NAME)
 }
 
 #[must_use]
@@ -531,6 +745,33 @@ pub fn pending_dialog_result(ctx: &ToolCtx, page: PageId) -> Option<ToolResult> 
         .signals()
         .pending_dialog_line(&page)
         .map(ToolResult::error)
+}
+
+/// A chooser is recoverable selection state shared by granular tools and run. The node and
+/// CDP session stay in core; agents receive only the action needed to finish selecting files.
+pub async fn pending_file_chooser_result(
+    ctx: &ToolCtx,
+    page: PageId,
+    wait_for_event: bool,
+) -> ToolExecResult<Option<ToolResult>> {
+    let files = ctx.browser.files();
+    // Only native activation actions need the UI-thread handoff window. Ordinary input
+    // still reports an already-pending chooser without adding latency to script loops.
+    let chooser = if wait_for_event {
+        files.chooser_after_action(page.clone()).await?
+    } else {
+        files.pending_chooser(page.clone()).await?
+    };
+    let Some(chooser) = chooser else {
+        return Ok(None);
+    };
+    Ok(Some(text_result(
+        format!(
+            "{{\"fileChooserOpen\":true,\"multiple\":{}}}\nA file chooser is open; call upload with file/files and omit ref to select files, or files=[] to clear it.",
+            chooser.multiple
+        ),
+        Some(serde_json::json!({"page":page.0,"fileChooserOpen":true,"multiple":chooser.multiple})),
+    )))
 }
 
 /// One line a host appends to an outer tool result while a saved profile target is not

@@ -23,10 +23,23 @@ use tokio::{task::JoinHandle, time::timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
+/// Whether this server groups pages the agent did not place itself.
+///
+/// Explicit grouping is enforced here, at the two entry points every server-made group comes
+/// through: this effect (every dispatched call) and
+/// [`run_tab_group_work`], which the script hook also spawns. Nothing else records a session
+/// group, so with both closed the session never has one, and the rest falls away on its own:
+/// core gets no default group to open pages into, renames have no group to retitle, and
+/// retention has nothing to collapse or close. An agent's own `groupId` placement is core's
+/// and still works.
+fn groups_automatically(call: &ToolCall) -> bool {
+    call.state.config.behavior.tab_grouping.is_automatic()
+}
+
 /// Creates or joins the durable tab group for a successful `tabs new` call.
 pub fn apply(context: ToolEffectContext<'_>) -> BoxFuture<'_, anyhow::Result<Option<ToolResult>>> {
     Box::pin(async move {
-        if context.result.is_error {
+        if context.result.is_error || !groups_automatically(context.call) {
             return Ok(None);
         }
         if context.call.identity.is_none() || context.call.browser_session.is_none() {
@@ -191,6 +204,9 @@ fn spawn_tab_group_work(call: ToolCall, created: Option<CreatedPage>) -> JoinHan
 /// script hook so a page a script opens joins the agent's group the same way a
 /// `tabs new` page does.
 pub(crate) async fn run_tab_group_work(call: ToolCall, created: Option<CreatedPage>) {
+    if !groups_automatically(&call) {
+        return;
+    }
     let (Some(identity), Some(browser), Some(tab_groups)) = (
         call.identity.as_ref(),
         call.view.as_ref(),
@@ -1053,7 +1069,7 @@ mod tests {
         ids::SessionId as AppSessionId,
         services::sessions::{RetainedGroupAction, Sessions},
     };
-    use browseros_cdp::{CdpError, CdpEvent};
+    use browseros_cdp::{CdpError, CdpEvent, TargetedEvents};
     use browseros_core::{CdpConnection, SessionId};
     use std::{
         collections::{BTreeSet, HashMap},
@@ -1063,7 +1079,7 @@ mod tests {
         },
         time::Duration,
     };
-    use tokio::sync::{Notify, broadcast};
+    use tokio::sync::{Notify, broadcast, mpsc};
 
     #[tokio::test]
     async fn dragged_group_is_detached_from_placement_but_retained_for_cleanup()
@@ -1899,6 +1915,7 @@ mod tests {
 
     struct GroupDispatchRecorder {
         sender: broadcast::Sender<CdpEvent>,
+        targeted: TargetedEvents,
         calls: StdMutex<Vec<(String, Value)>>,
         members: StdMutex<HashMap<String, BTreeSet<i64>>>,
         titles: StdMutex<HashMap<String, String>>,
@@ -1920,6 +1937,7 @@ mod tests {
             let (sender, _) = broadcast::channel(8);
             Self {
                 sender,
+                targeted: TargetedEvents::default(),
                 calls: StdMutex::new(Vec::new()),
                 members: StdMutex::new(HashMap::new()),
                 titles: StdMutex::new(HashMap::new()),
@@ -2278,6 +2296,10 @@ mod tests {
             self.sender.subscribe()
         }
 
+        fn events_targeted(&self, method: &str) -> mpsc::UnboundedReceiver<CdpEvent> {
+            self.targeted.subscribe(method)
+        }
+
         fn is_connected(&self) -> bool {
             true
         }
@@ -2364,6 +2386,7 @@ mod tests {
         let sessions = Sessions::new(
             Arc::new(AuditLog::new(database.clone())),
             Arc::new(SessionTabLedger::new(database)),
+            Duration::from_secs(60),
             Duration::from_secs(60),
             Duration::from_secs(60),
             Duration::from_secs(1),

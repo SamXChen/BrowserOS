@@ -208,7 +208,7 @@ pub enum RuntimeCommand {
     SetCapture(bool),
     SetRules {
         rules: Arc<RuntimeRuleSet>,
-        ack: Option<oneshot::Sender<ApplyReport>>,
+        ack: oneshot::Sender<ApplyReport>,
     },
     Shutdown,
 }
@@ -225,12 +225,6 @@ impl NetworkRuntimeHandle {
         let _ = self.commands.send(RuntimeCommand::SetCapture(running));
     }
 
-    pub fn set_rules(&self, rules: Arc<RuntimeRuleSet>) {
-        let _ = self
-            .commands
-            .send(RuntimeCommand::SetRules { rules, ack: None });
-    }
-
     /// Replace the rule snapshot and wait until every attached page session has
     /// the new Fetch patterns enabled. Returns the number of sessions that
     /// acknowledged; `0` means the caller must not claim `active`.
@@ -238,10 +232,7 @@ impl NetworkRuntimeHandle {
         let (ack, receiver) = oneshot::channel();
         if self
             .commands
-            .send(RuntimeCommand::SetRules {
-                rules,
-                ack: Some(ack),
-            })
+            .send(RuntimeCommand::SetRules { rules, ack })
             .is_err()
         {
             return ApplyReport::default();
@@ -259,11 +250,6 @@ impl NetworkRuntimeHandle {
             release.cancel();
         }
         let _ = self.commands.send(RuntimeCommand::Shutdown);
-    }
-
-    #[must_use]
-    pub fn is_alive(&self) -> bool {
-        !self.commands.is_closed()
     }
 
     #[must_use]
@@ -320,17 +306,15 @@ impl Shared {
     fn apply_command_rules(
         &self,
         rules: Arc<RuntimeRuleSet>,
-        ack: Option<oneshot::Sender<ApplyReport>>,
+        ack: oneshot::Sender<ApplyReport>,
     ) -> bool {
         let generation = rules.generation;
         if generation < self.rules().generation {
-            if let Some(ack) = ack {
-                let _ = ack.send(ApplyReport {
-                    generation,
-                    stale: true,
-                    ..ApplyReport::default()
-                });
-            }
+            let _ = ack.send(ApplyReport {
+                generation,
+                stale: true,
+                ..ApplyReport::default()
+            });
             return false;
         }
         if let Ok(mut slot) = self.rules.write() {
@@ -342,9 +326,7 @@ impl Shared {
             slot.cancel();
             *slot = CancellationToken::new();
         }
-        if let Some(ack) = ack
-            && let Ok(mut waiters) = self.apply_waiters.lock()
-        {
+        if let Ok(mut waiters) = self.apply_waiters.lock() {
             waiters.push(ack);
         }
         true
@@ -2311,12 +2293,13 @@ mod tests {
     #[test]
     fn runtime_rejects_older_generation() {
         let shared = Shared::default();
+        let (accepted_ack, _accepted_receiver) = oneshot::channel();
         assert!(shared.apply_command_rules(
             Arc::new(RuntimeRuleSet {
                 generation: 5,
                 rules: Vec::new(),
             }),
-            None,
+            accepted_ack,
         ));
 
         let (ack, mut receiver) = oneshot::channel();
@@ -2325,7 +2308,7 @@ mod tests {
                 generation: 4,
                 rules: Vec::new(),
             }),
-            Some(ack),
+            ack,
         );
         assert!(!accepted, "an older generation must not replace g5");
         let report = receiver.try_recv().expect("the stale ack is immediate");

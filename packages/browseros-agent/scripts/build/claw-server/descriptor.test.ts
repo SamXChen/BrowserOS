@@ -63,10 +63,10 @@ describe('BrowserClaw Rust build descriptor', () => {
       ])
       expect(getTargetRules(manifest, target)).toEqual([
         {
-          name: 'BrowserOS neo skill',
+          name: 'NeoB product skill',
           source: {
             type: 'local',
-            path: 'resources/skills/browserclaw/SKILL.md',
+            path: '../../skills/neob/SKILL.md',
           },
           destination: 'resources/skills/browserclaw/SKILL.md',
           executable: false,

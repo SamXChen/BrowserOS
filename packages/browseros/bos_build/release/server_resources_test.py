@@ -104,7 +104,7 @@ class ServerResourceBuilderTest(unittest.TestCase):
         claw_manifest.write_text(
             '[package]\nname = "claw-server"\nversion = "0.0.18"\n'
         )
-        skill = self.agent / "resources/skills/browserclaw/SKILL.md"
+        skill = self.repo / "skills/neob/SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.write_text("browserclaw skill")
 

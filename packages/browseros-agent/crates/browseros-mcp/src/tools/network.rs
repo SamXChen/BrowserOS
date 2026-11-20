@@ -8,7 +8,6 @@ use serde_json::{Value, json};
 /// instructions quote the same constant instead of keeping a second copy.
 pub const GUIDE: &str = include_str!("guides/network.md");
 
-
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum Action {

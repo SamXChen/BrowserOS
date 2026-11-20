@@ -27,17 +27,20 @@ pub const UPSTREAM_TOOLS: &[&str] = &[
     "await_human_help",
     "browser_profiles",
     "browser_target",
+    "credentials",
     "diff",
     "download",
-    "evaluate",
+    "evaluate_in_page",
     "grep",
     "history",
     "mark_skill_run",
     "name_session",
     "navigate",
+    "payment_cards",
     "pdf",
     "pursue",
     "read",
+    "read_output",
     "request_human_help",
     "run",
     "save_skill",
@@ -105,7 +108,7 @@ impl std::fmt::Display for RegistryProblem {
                 "NeoB-only tool `{name}` does not expose its registered guide as its description"
             ),
         };
-        write!(formatter, "{message} (design/adding-neob-tools.md)")
+        write!(formatter, "{message}")
     }
 }
 
@@ -394,8 +397,8 @@ mod tests {
         );
         for problem in all_problems {
             assert!(
-                problem.to_string().contains("design/adding-neob-tools.md"),
-                "error lacks the remediation guide: {problem}"
+                !problem.to_string().is_empty(),
+                "problem has no message: {problem}"
             );
         }
         assert!(SKILL.contains("## NeoB-only tools"));

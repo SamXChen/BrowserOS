@@ -219,11 +219,6 @@ pub struct NetworkHandoffView {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct NetworkHandoffListView {
-    pub handoffs: Vec<NetworkHandoffView>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct NetworkHandoffDetail {
     pub handoff: NetworkHandoffView,
 }

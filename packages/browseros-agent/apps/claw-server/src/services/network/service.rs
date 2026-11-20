@@ -32,7 +32,7 @@ use browseros_core::{
     BrowserSession,
     network::{
         HitRecord, MockMark, NetworkRecord, NetworkRuntime, ResponseProcessor, RuntimeEvent,
-        RuntimeStats, TabSummary, matches,
+        TabSummary, matches,
     },
 };
 use futures_util::future::BoxFuture;
@@ -349,10 +349,6 @@ impl NetworkService {
         let snapshot = self.capture_json().await;
         self.broadcast("capture", snapshot.clone());
         Ok(snapshot)
-    }
-
-    pub async fn capture_running(&self) -> bool {
-        self.state.lock().await.running
     }
 
     async fn clear_records(&self) -> AppResult<u64> {
@@ -716,10 +712,6 @@ impl NetworkService {
         ))
     }
 
-    pub async fn handoff_body(&self, id: &str) -> AppResult<Option<Vec<u8>>> {
-        self.bodies.read_handoff(id).await
-    }
-
     /// A window of the handoff body, for MCP `handoff_get`. Always honours
     /// `offset`/`limit`, even past 512KiB.
     pub async fn handoff_body_window(
@@ -874,9 +866,7 @@ impl NetworkService {
     }
 
     /// Explains why recent requests missed this rule, for AI diagnosis only;
-    /// Reached through MCP `rule_status`,
-    /// not through REST, so the compiler cannot see a caller inside this crate.
-    #[allow(dead_code)]
+    /// reached through MCP `rule_status`.
     pub async fn near_misses(&self, rule_id: &str) -> AppResult<Vec<NetworkNearMissView>> {
         let rule = self.rules.resolve_reference(rule_id).await?;
         let current = self
@@ -1140,10 +1130,6 @@ impl NetworkService {
             "bodyBytes": state.body_bytes,
             "tabs": state.tabs,
         })
-    }
-
-    pub fn runtime_stats(&self) -> Option<RuntimeStats> {
-        self.runtime.current().map(|handle| handle.stats())
     }
 
     // ---- runtime plumbing ----------------------------------------------

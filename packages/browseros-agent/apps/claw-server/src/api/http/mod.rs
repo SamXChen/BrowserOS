@@ -18,14 +18,18 @@ use tracing::{Instrument, info_span};
 use ulid::Ulid;
 
 pub(crate) mod audit;
+mod claude_desktop;
 mod cockpit;
 mod connections;
 mod feedback;
+mod help_events;
 mod live;
 mod network;
+mod plan;
 mod previews;
 mod recordings;
 mod replay;
+mod screencasts;
 mod screenshots;
 mod sessions;
 mod settings;
@@ -55,6 +59,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/api/v1/audit/storage", get(audit::storage))
         .route("/api/v1/audit/retention", put(audit::set_retention))
         .route("/api/v1/audit/cleanup", post(audit::cleanup))
+        .route("/api/v1/audit/agents", get(audit::agents))
         .route(
             "/api/v1/settings/telemetry",
             get(settings::telemetry).put(settings::update_telemetry),
@@ -63,10 +68,8 @@ pub fn router(state: AppState) -> Router<AppState> {
             "/api/v1/settings/agent",
             get(settings::agent).put(settings::update_agent),
         )
-        .route(
-            "/api/v1/settings/agent/jev-token",
-            put(settings::save_jev_token).delete(settings::remove_jev_token),
-        )
+        .route("/api/v1/help/events", get(help_events::events))
+        .route("/api/v1/screencasts", get(screencasts::screencasts))
         .route("/api/v1/network/state", get(network::state))
         .route(
             "/api/v1/network/captures",
@@ -176,6 +179,14 @@ pub fn router(state: AppState) -> Router<AppState> {
             post(recordings::append_document_events)
                 .layer(DefaultBodyLimit::max(RECORDING_INGEST_MAX_BYTES)),
         )
+        .route(
+            "/api/v1/claude-desktop/extension",
+            get(claude_desktop::extension),
+        )
+        .route(
+            "/api/v1/claude-desktop/extension/install",
+            post(claude_desktop::install),
+        )
         .route("/api/v1/connections", get(connections::list))
         .route(
             "/api/v1/connections/{harness}",
@@ -187,6 +198,31 @@ pub fn router(state: AppState) -> Router<AppState> {
             get(skills::get).put(skills::update).delete(skills::delete),
         )
         .route("/api/v1/skills/{name}/runs", get(skills::list_runs))
+        .route("/api/v1/plan", get(plan::plan))
+        .route("/api/v1/plan/pricing", get(plan::pricing))
+        .route("/api/v1/plan/savings", get(sessions::savings))
+        .route("/api/v1/plan/checkout", post(plan::start_checkout))
+        .route("/api/v1/plan/checkout/{checkout_id}", get(plan::checkout))
+        .route("/api/v1/plan/key", get(plan::key))
+        .route("/api/v1/plan/key/activate", post(plan::activate))
+        .route(
+            "/api/v1/plan/key/computers/{install_id}/remove",
+            post(plan::remove_computer),
+        )
+        .route(
+            "/api/v1/plan/key/computers/{install_id}/rename",
+            post(plan::rename_computer),
+        )
+        .route("/api/v1/plan/key/reset", post(plan::reset_key))
+        .route("/api/v1/plan/cancel", post(plan::cancel))
+        .route("/api/v1/plan/resume", post(plan::resume))
+        .route("/api/v1/plan/portal", post(plan::portal))
+        .route("/api/v1/plan/refresh", post(plan::refresh))
+        .route("/api/v1/skills/{name}/flow", get(skills::flow))
+        .route(
+            "/api/v1/skills/{name}/ultrafast/approve-write",
+            post(skills::approve_write).delete(skills::revoke_write),
+        )
         .nest_service(
             "/mcp",
             Router::new()
@@ -261,7 +297,10 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let reject_origin = (path == "/api/v1/recordings/events"
         && !trusted_recording_origin(req.headers()))
-        || (path == "/api/v1/extension/update-ready" && !trusted_update_origin(req.headers()))
+        || ((path == "/api/v1/extension/update-ready"
+            || path == "/api/v1/screencasts"
+            || is_plan_path(&path))
+            && !trusted_extension_origin(req.headers()))
         || (path.starts_with("/api/v1/network") && !trusted_network_origin(req.headers()));
     let span = info_span!("http_request", request_id = %request_id.0, %method, %path);
     async move {
@@ -314,8 +353,6 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
     .await
 }
 
-/// Network data is readable by the extension and by native (originless) clients
-/// only. Any other page origin, including the opaque `null`, is rejected.
 /// Loopback hosts the network API accepts, so a DNS-rebinding page cannot
 /// reach it by pointing some other name at 127.0.0.1.
 fn host_is_loopback(headers: &axum::http::HeaderMap) -> bool {
@@ -336,6 +373,8 @@ fn host_is_loopback(headers: &axum::http::HeaderMap) -> bool {
 }
 
 /// The network API serves the extension and native MCP clients only.
+/// Network data is readable by the extension and by native (originless) clients
+/// only. Any other page origin, including the opaque `null`, is rejected.
 ///
 /// A browser request without `Origin` is still checked against
 /// `Sec-Fetch-Site`: an `<img>` from another site would otherwise be able to
@@ -361,6 +400,12 @@ fn trusted_network_origin(headers: &axum::http::HeaderMap) -> bool {
                 )
         }
     }
+}
+
+/// The ultrafast routes can buy, cancel, reset a key and remove computers, and their answers name
+/// the computers on the key, so no web page may reach them.
+fn is_plan_path(path: &str) -> bool {
+    path == "/api/v1/plan" || path.starts_with("/api/v1/plan/")
 }
 
 /// Stable origin derived from claw-app's manifest signing key.
@@ -402,13 +447,22 @@ async fn extension_update_ready(
     StatusCode::NO_CONTENT
 }
 
-fn trusted_update_origin(headers: &axum::http::HeaderMap) -> bool {
+/// claw-app, or a native client (no `Origin` and no `Sec-Fetch-Site`). Every other web page is
+/// refused: responses here carry `Access-Control-Allow-Origin: *`, and a WebSocket has no CORS at
+/// all, so the origin check is the only thing keeping a site from these endpoints.
+///
+/// Chrome sends no `Origin` on a GET from an extension page that holds host permission, only
+/// `Sec-Fetch-Site: none`. A web page cannot set that header, and its requests here say
+/// `cross-site`.
+fn trusted_extension_origin(headers: &axum::http::HeaderMap) -> bool {
     match headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
     {
         Some(BROWSERCLAW_EXTENSION_ORIGIN) => true,
-        None => !headers.contains_key("sec-fetch-site"),
+        None => headers
+            .get("sec-fetch-site")
+            .is_none_or(|value| value.as_bytes() == b"none"),
         Some(_) => false,
     }
 }

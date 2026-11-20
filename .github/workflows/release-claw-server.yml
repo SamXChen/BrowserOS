@@ -76,6 +76,8 @@ on:
         required: true
       R2_BUCKET:
         required: true
+      RELEASE_REFLECT_TOKEN:
+        required: false
       SPARKLE_PRIVATE_KEY:
         required: false
 
@@ -274,7 +276,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-26
           - runner: windows-latest
 
     steps:
@@ -310,13 +312,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Both macOS targets build on the arm64 image. darwin-x64 cross-compiles,
+          # and its "Verify stamped binary version" step runs the x86_64 binary
+          # under Rosetta 2, which GitHub installs on its arm64 macOS images.
           - target: darwin-arm64
             rust_target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-26
             binary_ext: ""
           - target: darwin-x64
             rust_target: x86_64-apple-darwin
-            runner: macos-14
+            runner: macos-26
             binary_ext: ""
           - target: linux-arm64
             rust_target: aarch64-unknown-linux-gnu
@@ -456,6 +461,15 @@ jobs:
           # The requested source ref can predate the source package rename.
           # Resolve its package identity from that checkout's release descriptor.
           server_package="$(uv run --directory ../browseros python -c 'from bos_build.release.components import component_by_id; print(component_by_id("claw-server-rust").package_name)')"
+          # rustc links macOS binaries for its per-arch default minimum, but the
+          # cc crate compiles the C dependencies (aws-lc, ring, SQLite, QuickJS)
+          # for the runner's Xcode SDK version when this is unset. Pin it to
+          # rustc's defaults so the shipped minimum macOS stays fixed across
+          # runner images.
+          case "$RUST_TARGET" in
+            aarch64-apple-darwin) export MACOSX_DEPLOYMENT_TARGET=11.0 ;;
+            x86_64-apple-darwin) export MACOSX_DEPLOYMENT_TARGET=10.12 ;;
+          esac
           cargo build --release --locked --target "$RUST_TARGET" \
             -p "$server_package" \
             --bin browseros-claw-server-rs
@@ -509,9 +523,9 @@ jobs:
           binary_path = agent / "target" / rust_target / "release" / binary_name
           if not binary_path.is_file():
               raise SystemExit(f"Missing compiled binary: {binary_path}")
-          source_skill = agent / "resources/skills/browserclaw/SKILL.md"
+          source_skill = repo / "skills/neob/SKILL.md"
           if not source_skill.is_file():
-              raise SystemExit(f"Missing BrowserOS skill: {source_skill}")
+              raise SystemExit(f"Missing NeoB skill: {source_skill}")
 
           dist_root = agent / "dist/prod/claw-server"
           stage_root = dist_root / target
@@ -1023,18 +1037,36 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    # Source versions have one writer: the repository named by
+    # RELEASE_REFLECT_REPO, else this one. BrowserOS-internal releases from a
+    # one-way mirror of the public repository, so it names public main (with a
+    # RELEASE_REFLECT_TOKEN that can push there) and receives the bump on its
+    # next upstream sync. Bumping the mirror itself would leave public behind.
+    env:
+      GH_REPO: ${{ vars.RELEASE_REFLECT_REPO || github.repository }}
     steps:
+      - name: Resolve version source
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REFLECT_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          default_branch="$(gh api "repos/$GH_REPO" --jq .default_branch)"
+          echo "default_branch=$default_branch" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ github.event.repository.default_branch || 'main' }}
+          repository: ${{ env.GH_REPO }}
+          ref: ${{ steps.source.outputs.default_branch }}
+          token: ${{ secrets.RELEASE_REFLECT_TOKEN || github.token }}
 
       - uses: astral-sh/setup-uv@v8.3.2
 
       - name: Reflect Claw server version on main via PR
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ steps.source.outputs.default_branch }}
+          GH_TOKEN: ${{ secrets.RELEASE_REFLECT_TOKEN || github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail

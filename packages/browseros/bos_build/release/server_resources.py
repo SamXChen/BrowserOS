@@ -426,9 +426,9 @@ class ServerResourceBuilder:
         shutil.copy2(artifact, runtime)
         if target.os != "windows":
             runtime.chmod(0o755)
-        skill_source = self.agent_root / "resources/skills/browserclaw/SKILL.md"
+        skill_source = self.repo_root / "skills/neob/SKILL.md"
         if not skill_source.is_file():
-            raise FileNotFoundError(f"BrowserOS neo skill is missing: {skill_source}")
+            raise FileNotFoundError(f"NeoB skill is missing: {skill_source}")
         skill = destination / "resources/skills/browserclaw/SKILL.md"
         skill.parent.mkdir(parents=True)
         shutil.copy2(skill_source, skill)

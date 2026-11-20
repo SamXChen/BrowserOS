@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::Router;
 use claw_server::{
-    AppRuntime, AppState, ShutdownHandle, VERSION,
+    AppRuntime, AppState, ShutdownHandle, StartupReporter, VERSION,
     analytics::{AnalyticsSink, events},
     api::mcp::browser_mcp_service,
     build_router,
@@ -41,8 +41,22 @@ struct PortConflict {
     port: u16,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Stack for each tokio worker thread. A `run` call nests QuickJS, the SDK bridge and a whole
+/// tool (act, then check, then its click) on one worker. In a debug build that chain needs
+/// close to the default 2 MiB, and on Linux it overflowed, which aborts the whole process.
+/// The size is reserved address space; pages are committed only as the stack grows.
+const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// `#[tokio::main]` with a larger worker stack, which the attribute cannot set.
+fn main() -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(WORKER_STACK_BYTES)
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     std::hint::black_box(VERSION_MARKER);
     std::hint::black_box(POSTHOG_KEY_MARKER);
     let (config_path, stdio_mode) = match Cli::parse_action() {
@@ -53,6 +67,8 @@ async fn main() -> anyhow::Result<()> {
         CliAction::Run { config, stdio } => (config, stdio),
     };
     let config = Arc::new(claw_server::config::Config::load(config_path)?);
+    // Process-wide and fixed from here on; every page script reads it as it runs.
+    browseros_core::page_js::set_isolated_world_enabled(config.behavior.isolated_world);
     let _guard = init_tracing(config.clone())?;
     log_native_identity(&config);
     // A boot that fails before the server binds used to leave no reason in the log: the error went
@@ -60,7 +76,10 @@ async fn main() -> anyhow::Result<()> {
     // never flushed it. Capture panics synchronously and record the startup outcome so the failure
     // is always diagnosable from the log directory.
     let logs_dir = config.browserclaw_dir.join("logs");
-    install_panic_hook(logs_dir.clone());
+    // Reports fatal boot failures and panics to Sentry independently of the database, which the
+    // runtime reporter needs but a boot crash may not have. Built before anything that can fail.
+    let startup_reporter = StartupReporter::from_dir(&config.browserclaw_dir).await;
+    install_panic_hook(logs_dir.clone(), startup_reporter.clone());
     record_startup(&logs_dir, "starting", None);
     let state = match AppState::new(config.clone()).await {
         Ok(state) => state,
@@ -68,6 +87,8 @@ async fn main() -> anyhow::Result<()> {
             let detail = error.to_string();
             error!(error = %error, "startup failed before the server could bind");
             record_startup(&logs_dir, "failed", Some(detail.as_str()));
+            // A fixed label only: the error text can carry a path or other user data.
+            startup_reporter.report("startup", "init_failed", None);
             return Err(error.into());
         }
     };
@@ -75,6 +96,13 @@ async fn main() -> anyhow::Result<()> {
     // Compute the build identity off the critical path: the port must open first, and a
     // mismatch is information rather than a reason to refuse to start.
     spawn_build_identity(&state);
+    // Debug builds only, so the MCP conformance suite can drive compiled flows end to end.
+    if cfg!(debug_assertions) && std::env::var_os("CLAW_SERVER_ULTRAFAST").is_some() {
+        state.ultrafast.pin_on();
+    }
+    // Report one-time startup conditions worth seeing remotely, such as a database migrated by a
+    // newer BrowserOS neo (read-forward). Consent-gated and drawn from the shared daily budget.
+    state.report_startup_state().await;
     let mut runtime = AppRuntime::start(state);
     let run_result = run(&mut runtime, config, stdio_mode).await;
     let shutdown_result = runtime.shutdown().await;
@@ -97,6 +125,9 @@ async fn main() -> anyhow::Result<()> {
             error!(port = conflict.port, "{conflict}");
             std::process::exit(EXIT_PORT_CONFLICT);
         }
+        // A genuine post-init failure, not the expected port handoff above, is worth seeing
+        // remotely. Fixed label only, for the same reason as the init path.
+        startup_reporter.report("startup", "run_failed", None);
     }
     outcome
 }
@@ -113,6 +144,30 @@ fn log_native_identity(config: &claw_server::config::Config) {
         );
     } else {
         info!(%native, "native BrowserOS identity from launch config");
+    }
+    info!(
+        mode = config.mode.as_str(),
+        env = claw_server::config::HOSTED_MODE_ENV,
+        "server mode"
+    );
+    // The effective values, so a deployment can confirm its behaviour file took hold.
+    info!(
+        tab_grouping = config.behavior.tab_grouping.as_str(),
+        tab_close_after = ?config.behavior.tab_close_after,
+        isolated_world = config.behavior.isolated_world,
+        run_wall_timeout_seconds = config.behavior.run_policy.wall_timeout().as_secs(),
+        file_env = claw_server::config::BEHAVIOR_FILE_ENV,
+        "server behaviour"
+    );
+    // The file may come from a newer or older server than this one; what it says that this
+    // build does not know kept its default instead of stopping startup.
+    for ignored in &config.behavior_ignored {
+        warn!(
+            key = %ignored.key,
+            reason = %ignored.reason,
+            file_env = claw_server::config::BEHAVIOR_FILE_ENV,
+            "behaviour file entry ignored"
+        );
     }
 }
 
@@ -146,9 +201,10 @@ fn epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Appends panics to a dedicated file synchronously. The non-blocking log appender drops its buffer
-/// when the process exits on a panic, so without this a crash leaves no trace.
-fn install_panic_hook(logs_dir: PathBuf) {
+/// Appends panics to a dedicated file synchronously and reports them to Sentry before the process
+/// exits. The non-blocking log appender drops its buffer when the process exits on a panic, so
+/// without this a crash leaves no trace.
+fn install_panic_hook(logs_dir: PathBuf, reporter: StartupReporter) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let line = format!(
@@ -165,6 +221,11 @@ fn install_panic_hook(logs_dir: PathBuf) {
         }
         let detail = info.to_string();
         record_startup(&logs_dir, "panicked", Some(detail.as_str()));
+        // Report the source location only, never the payload, which can hold user data, then flush.
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()));
+        reporter.report("startup", "panic", location.as_deref());
         default_hook(info);
     }));
 }
@@ -370,9 +431,7 @@ fn spawn_build_identity(state: &claw_server::app::AppState) {
                 }
             };
             match claw_server::services::build_info::manifest_path_for(&exe) {
-                Some(manifest) => {
-                    claw_server::services::build_info::evaluate(&exe, &manifest)
-                }
+                Some(manifest) => claw_server::services::build_info::evaluate(&exe, &manifest),
                 None => claw_server::services::build_info::BuildInfo::unknown(
                     "the executable is not inside a release directory",
                 ),
@@ -452,11 +511,15 @@ mod tests {
             resources_dir: root.path().join("resources"),
             browserclaw_dir: root.path().to_path_buf(),
             session_idle: Duration::from_secs(300),
+            session_complete_idle: Duration::from_secs(300),
             session_retention: Duration::from_secs(7_200),
             session_sweep_interval: Duration::from_secs(60),
             replay_retention_days: 7,
             dev_mode: false,
             native: Default::default(),
+            mode: Default::default(),
+            behavior: Default::default(),
+            behavior_ignored: Vec::new(),
         });
         let state = AppState::new_with_home(config.clone(), root.path().join("home")).await?;
         let shutdown = state.shutdown.clone();
@@ -502,11 +565,15 @@ mod tests {
             resources_dir: root.path().join("resources"),
             browserclaw_dir: root.path().to_path_buf(),
             session_idle: Duration::from_secs(300),
+            session_complete_idle: Duration::from_secs(300),
             session_retention: Duration::from_secs(7_200),
             session_sweep_interval: Duration::from_secs(60),
             replay_retention_days: 7,
             dev_mode: false,
             native: Default::default(),
+            mode: Default::default(),
+            behavior: Default::default(),
+            behavior_ignored: Vec::new(),
         });
         let state = AppState::new_with_home(config.clone(), root.path().join("home")).await?;
         let mut runtime = AppRuntime::start(state);

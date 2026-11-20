@@ -2,7 +2,7 @@
  * Mutations with their toasts, so the screen shell only wires components.
  */
 
-import { toast } from 'sonner'
+import { toast, toastError, toastSuccess } from '@/modules/toast/toast'
 import { networkCopy } from './network.copy'
 import type { NetworkScreenData } from './network.data'
 
@@ -13,15 +13,15 @@ const errorText = (cause: unknown) =>
 export function useNetworkActions(data: NetworkScreenData) {
   const startCapture = (): void => {
     void data.actions.startCapture().then(
-      () => toast.success(copy.capture.started),
-      (cause: unknown) => toast.error(errorText(cause)),
+      () => toastSuccess(copy.capture.started),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
   const stopCapture = (): void => {
     void data.actions.stopCapture().then(
-      () => toast.success(copy.capture.stoppedToast),
-      (cause: unknown) => toast.error(errorText(cause)),
+      () => toastSuccess(copy.capture.stoppedToast),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -29,10 +29,10 @@ export function useNetworkActions(data: NetworkScreenData) {
     void data.actions.stopAll().then(
       (result) => {
         if (!(result as { narrowed?: boolean }).narrowed) {
-          toast.error(copy.errors.ruleAction('fetch_not_disabled'))
+          toastError(copy.errors.ruleAction('fetch_not_disabled'))
         }
       },
-      (cause: unknown) => toast.error(errorText(cause)),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -40,9 +40,9 @@ export function useNetworkActions(data: NetworkScreenData) {
     void data.actions.clearRecords().then(
       () => {
         done()
-        toast.success(copy.capture.cleared)
+        toastSuccess(copy.capture.cleared)
       },
-      (cause: unknown) => toast.error(errorText(cause)),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -51,12 +51,12 @@ export function useNetworkActions(data: NetworkScreenData) {
       async (handoff) => {
         try {
           await navigator.clipboard.writeText(handoff.clipboardText)
-          toast.success(copy.list.copied)
+          toastSuccess(copy.list.copied)
         } catch (cause) {
-          toast.error(errorText(cause))
+          toastError(errorText(cause))
         }
       },
-      (cause: unknown) => toast.error(errorText(cause)),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -76,7 +76,7 @@ export function useNetworkActions(data: NetworkScreenData) {
             : undefined,
         })
       },
-      (cause: unknown) => toast.error(errorText(cause)),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -94,7 +94,7 @@ export function useNetworkActions(data: NetworkScreenData) {
           },
         })
       },
-      (cause: unknown) => toast.error(errorText(cause)),
+      (cause: unknown) => toastError(errorText(cause)),
     )
   }
 
@@ -106,7 +106,7 @@ export function useNetworkActions(data: NetworkScreenData) {
       .then(
         () => toast(copy.rules.actions.copiedForAi),
         (cause: unknown) =>
-          toast.error(copy.detail.copyFailed(errorText(cause))),
+          toastError(copy.detail.copyFailed(errorText(cause))),
       )
   }
 

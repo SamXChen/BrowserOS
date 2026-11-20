@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet } from 'react-router'
 import { AppSidebar } from '@/components/sidebar/AppSidebar'
+import { ToastHost } from '@/modules/toast/ToastHost'
 
 const COLLAPSE_DELAY = 150
 
@@ -45,6 +46,7 @@ export function CockpitShell() {
       <main className="min-h-screen overflow-y-auto">
         <Outlet />
       </main>
+      <ToastHost />
     </div>
   )
 }

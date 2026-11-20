@@ -93,16 +93,6 @@ impl BodyStore {
         read_all(&self.handoff_path(handoff_id)?).await
     }
 
-    pub async fn handoff_size(&self, handoff_id: &str) -> u64 {
-        let Ok(path) = self.handoff_path(handoff_id) else {
-            return 0;
-        };
-        tokio::fs::metadata(path)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or(0)
-    }
-
     pub async fn remove_handoff(&self, handoff_id: &str) -> AppResult<()> {
         let dir = self.root.join("handoffs").join(validate_id(handoff_id)?);
         remove_dir_if_present(&dir).await

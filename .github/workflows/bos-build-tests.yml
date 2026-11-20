@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "packages/browseros/bos_build/**"
+      - "packages/browseros/docker/neo/**"
       - "packages/browseros/tools/vendor_uploads/**"
       - "packages/browseros/chromium_files/products/**"
       - "packages/browseros/pyproject.toml"
@@ -17,6 +18,7 @@ on:
       - ".github/workflows/build-browseros.yml"
       - ".github/workflows/nightly-macos-browseros.yml"
       - ".github/workflows/nightly-macos-browserclaw.yml"
+      - ".github/workflows/neo-sdk-image.yml"
       - ".github/workflows/reusable-build-macos-nightly.yml"
       - ".github/workflows/publish-server-ota.yml"
       - ".github/workflows/repair-update-feed.yml"
@@ -25,6 +27,7 @@ on:
       - ".github/workflows/release-browserclaw.yml"
       - ".github/workflows/release-claw-onboard.yml"
       - ".github/workflows/release-claw-server.yml"
+      - ".github/workflows/release-docker.yml"
       - ".github/workflows/release-extension-feeds.yml"
       - ".github/workflows/release-extensions.yml"
       - ".github/workflows/release-linux.yml"
@@ -55,15 +58,20 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: python3 -m unittest discover -s tools/release_secrets -t . -p "*_test.py" -v
 
+      - name: Run Docker smoke tests
+        run: uv run python -m unittest discover -s docker/neo -p "*_test.py" -v
+
       - name: Ruff
-        run: uv run ruff check bos_build
+        run: uv run ruff check bos_build docker/neo
 
       - name: CLI smoke
         run: |
           uv run browseros build --list > /dev/null
           # Runner has no chromium checkout — this smoke IS the
           # no-checkout regression test for --show-plan.
-          uv run browseros build --preset release --show-plan
+          # The public package retains its older pin for local debug builds.
+          # Release-floor acceptance/rejection is covered by build_test.py.
+          uv run browseros build --preset debug --show-plan
           uv run browseros product doctor
 
       - name: Run vendor_uploads tests

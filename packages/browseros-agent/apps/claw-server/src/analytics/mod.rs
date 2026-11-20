@@ -5,11 +5,11 @@ pub mod events;
 mod installation;
 pub mod script_fingerprint;
 mod service;
-mod state;
+pub(crate) mod state;
 
 use serde_json::Value;
 
-pub use service::AnalyticsService;
+pub use service::{AnalyticsService, Delivery};
 pub use state::TelemetryState;
 
 use events::EventDefinition;

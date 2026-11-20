@@ -11,8 +11,8 @@ use claw_server::{
     services::harness::{BROWSEROS_MCP_SERVER_NAME, Harness, HarnessService},
 };
 use harness_integrations::{
-    AgentId, AgentScope, LinkInput, McpManager, McpServer, McpServerSpec,
-    SkillSpec, resolve_agent_mcp_config_path,
+    AgentId, AgentScope, LinkInput, McpManager, McpServer, McpServerSpec, SkillSpec,
+    resolve_agent_mcp_config_path,
 };
 use serde_json::{Value, json};
 use std::{
@@ -293,6 +293,36 @@ async fn run_connections_case() -> anyhow::Result<()> {
     let restored_skill = service.run_skill_reconciliation().await?;
     assert_eq!(restored_skill.updated, 3);
 
+    // Subscribing swaps every connected agent's guide for the ultrafast one; cancelling puts the
+    // plain guide back. A repeat of the same state touches nothing.
+    let switching = HarnessService::new_with_managed_skill(
+        browserclaw_dir.join("mcp-manager"),
+        browserclaw_dir.join("harness-integrations"),
+        home.clone(),
+        SkillSpec::new(claw_server::identity::SLUG, "managed skill v1\n")?,
+        analytics.clone(),
+    )
+    .with_ultrafast_skill(SkillSpec::new(
+        claw_server::identity::SLUG,
+        "managed skill v1\nStart with pursue.\n",
+    )?);
+    assert!(switching.set_ultrafast_skill(true).await?);
+    assert_eq!(
+        fs::read_to_string(shared_skill.join("SKILL.md"))?,
+        "managed skill v1\nStart with pursue.\n"
+    );
+    assert!(!switching.set_ultrafast_skill(true).await?);
+    let kept = switching.run_skill_reconciliation().await?;
+    assert_eq!(
+        kept.updated, 0,
+        "the periodic pass keeps the ultrafast guide"
+    );
+    assert!(switching.set_ultrafast_skill(false).await?);
+    assert_eq!(
+        fs::read_to_string(shared_skill.join("SKILL.md"))?,
+        "managed skill v1\n"
+    );
+
     const NEW_MCP_URL: &str = "http://127.0.0.1:9999/mcp";
     let migrated = service.migrate_connected_urls(NEW_MCP_URL).await?;
     assert_eq!(migrated.migrated, 3);
@@ -528,24 +558,26 @@ async fn run_connections_case() -> anyhow::Result<()> {
     // Periodic reconcile writes and repairs exactly one entry name: an
     // entry another tool owns is left alone even when it is reachable on this machine.
     let claude_path = path_for(&paths, AgentId::ClaudeCode)?;
-    let connected = service.connect_browseros(Harness::ClaudeCode, MCP_URL).await?;
+    let connected = service
+        .connect_browseros(Harness::ClaudeCode, MCP_URL)
+        .await?;
     assert!(connected.installed, "{}", connected.message);
     let mut boundary: Value = serde_json::from_str(&fs::read_to_string(claude_path)?)?;
-    boundary["mcpServers"]["browseros-neo"] = json!({ "type": "http", "url": "http://127.0.0.1:9200/mcp" });
-    boundary["mcpServers"]["other-browser"] = json!({ "type": "http", "url": "http://127.0.0.1:9202/mcp" });
+    boundary["mcpServers"]["browseros-neo"] =
+        json!({ "type": "http", "url": "http://127.0.0.1:9200/mcp" });
+    boundary["mcpServers"]["other-browser"] =
+        json!({ "type": "http", "url": "http://127.0.0.1:9202/mcp" });
     fs::write(claude_path, serde_json::to_string_pretty(&boundary)?)?;
     let foreign_before = boundary["mcpServers"].clone();
 
     service.run_reconciliation(MCP_URL).await?;
     let after_reconcile: Value = serde_json::from_str(&fs::read_to_string(claude_path)?)?;
     assert_eq!(
-        after_reconcile["mcpServers"]["browseros-neo"],
-        foreign_before["browseros-neo"],
+        after_reconcile["mcpServers"]["browseros-neo"], foreign_before["browseros-neo"],
         "reconcile rewrote an entry it does not own"
     );
     assert_eq!(
-        after_reconcile["mcpServers"]["other-browser"],
-        foreign_before["other-browser"],
+        after_reconcile["mcpServers"]["other-browser"], foreign_before["other-browser"],
         "reconcile rewrote an entry it does not own"
     );
     assert_eq!(
@@ -564,11 +596,15 @@ async fn test_router(browserclaw_dir: &Path, home: &Path) -> anyhow::Result<Rout
         resources_dir: browserclaw_dir.join("resources"),
         browserclaw_dir: browserclaw_dir.to_path_buf(),
         session_idle: Duration::from_secs(300),
+        session_complete_idle: Duration::from_secs(300),
         session_retention: Duration::from_secs(7_200),
         session_sweep_interval: Duration::from_secs(60),
         replay_retention_days: 7,
         dev_mode: false,
         native: Default::default(),
+        mode: Default::default(),
+        behavior: Default::default(),
+        behavior_ignored: Vec::new(),
     });
     let state = AppState::new_with_home(config, home.to_path_buf()).await?;
     Ok(build_router(state))

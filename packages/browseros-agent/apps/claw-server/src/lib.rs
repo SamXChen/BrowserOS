@@ -5,6 +5,8 @@ mod clock;
 pub mod config;
 pub mod db;
 pub mod error;
+#[cfg(test)]
+mod free_path;
 pub mod identity;
 pub mod ids;
 pub mod runtime;
@@ -15,3 +17,4 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use app::{AppState, build_router};
 pub use runtime::{AppRuntime, ShutdownHandle};
+pub use services::error_reporting::StartupReporter;

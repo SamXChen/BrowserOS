@@ -8,14 +8,16 @@ import type { ContractCase } from './cases'
 import { apiGet, expectError, waitUntil } from './helpers'
 
 // The harness sidecar carries no instance.browseros_version, so claw-server treats the
-// browser as an unknown native and does not offer tools gated on a BrowserOS release
-// (browser_profiles and browser_target need profile targeting, BrowserOS 0.51.1.3+).
+// browser as an unknown native and does not offer tools gated on a BrowserOS release:
+// browser_profiles and browser_target need profile targeting (0.51.1.3+), credentials and
+// payment_cards need their own domains (0.51.2.7+). A real install from the launcher writes
+// that version into the sidecar, so it offers all four; S6 checks that surface separately.
 const EXPECTED_TOOLS = [
   'act',
   'await_human_help',
   'diff',
   'download',
-  'evaluate',
+  'evaluate_in_page',
   'grep',
   'history',
   'mark_skill_run',
@@ -24,6 +26,7 @@ const EXPECTED_TOOLS = [
   'network',
   'pdf',
   'read',
+  'read_output',
   'request_human_help',
   'run',
   'save_skill',

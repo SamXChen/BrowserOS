@@ -52,6 +52,16 @@ echo "==> 内嵌启动脚本（设为 CFBundleExecutable，双击即注入参数
 cp "src/$APP_NAME" "$APP/Contents/MacOS/$LAUNCHER"
 chmod +x "$APP/Contents/MacOS/$LAUNCHER"
 cp "config.env.template" "$APP/Contents/Resources/config.env"
+
+# native 版本以真实内核为准：sidecar、launcher 与 /system/health 必须报同一个版本，
+# 硬编码会在官方应用升级后变成假的。
+NATIVE_VERSION="$($PB -c "Print :CFBundleShortVersionString" "$SRC/Contents/Info.plist")"
+if ! [[ "$NATIVE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "官方 Info.plist 的 CFBundleShortVersionString 不是四段数字：${NATIVE_VERSION:-<空>}" >&2
+  exit 1
+fi
+printf '\nNATIVE_VERSION=%s\n' "$NATIVE_VERSION" >> "$APP/Contents/Resources/config.env"
+
 $PB -c "Set :CFBundleExecutable $LAUNCHER" "$APP/Contents/Info.plist"
 
 # resource fork / Finder 信息会让 codesign 直接拒绝

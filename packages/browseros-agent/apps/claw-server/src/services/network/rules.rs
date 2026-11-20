@@ -1012,11 +1012,6 @@ impl RuleEngine {
     }
 
     /// A reference is a name, or a `rule_*` id.
-    /// Lower-cased names of every live rule; tests assert de-duplication.
-    pub async fn names_lowercase(&self) -> AppResult<Vec<String>> {
-        self.repo.rule_names_lowercase().await
-    }
-
     pub async fn resolve_reference(&self, reference: &str) -> AppResult<RuleRow> {
         if reference.starts_with("rule_") {
             if let Some(rule) = self.repo.get_rule(reference).await?

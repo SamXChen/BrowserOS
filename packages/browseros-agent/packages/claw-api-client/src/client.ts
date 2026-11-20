@@ -1,10 +1,15 @@
 import type {
+  ActivatePlanKeyRequest,
   AgentSettings,
   AppendRecordingEventsResponse,
+  AuditAgentList,
   AuditCleanupResult,
   AuditRetention,
   AuditStorageState,
+  CancelPlanRequest,
   CancelSessionResponse,
+  ClaudeDesktopExtension,
+  ClaudeDesktopInstallResult,
   CockpitStats,
   Connection,
   ConnectionList,
@@ -35,10 +40,18 @@ import type {
   NetworkStatus,
   NetworkStopAllResult,
   NetworkTabReloadRequest,
+  Plan,
+  PlanCheckout,
+  PlanCheckoutStatus,
+  PlanKey,
+  PlanKeyChange,
+  PlanPortal,
+  PlanPortalRequest,
+  PlanPricing,
+  PlanSavings,
   RecordFeedbackInviteRequest,
   RecordingMetadata,
   ResolveHelpResponse,
-  SaveJevTokenRequest,
   SessionDetail,
   SessionList,
   SessionScreenshotList,
@@ -47,9 +60,11 @@ import type {
   Skill,
   SkillCreate,
   SkillDetail,
+  SkillFlowSource,
   SkillList,
   SkillRunList,
   SkillUpdate,
+  StartPlanCheckoutRequest,
   SystemInfo,
   TelemetryState,
   UpdateAgentSettingsRequest,
@@ -140,6 +155,17 @@ export interface ListSkillRunsRequest {
   limit?: number
 }
 
+export type PlanCheckoutRequest =
+  operations['getPlanCheckout']['parameters']['path']
+
+export type PlanComputerRequest =
+  operations['removePlanComputer']['parameters']['path']
+
+export interface RenamePlanComputerOperationRequest {
+  installId: PlanComputerRequest['installId']
+  name: string
+}
+
 type ApiResult<T> =
   | { data: T; response: Response }
   | { error: unknown; response: Response }
@@ -213,24 +239,6 @@ export class ClawApiClient {
     )
   }
 
-  /**
-   * Stores the decision model credential, which offers the pursue tool. Its own
-   * call rather than a field on updateAgentSettings, so saving a switch can
-   * never clear a credential. The reply never carries the token.
-   */
-  async saveJevToken(body: SaveJevTokenRequest): Promise<AgentSettings> {
-    return this.unwrap(
-      await this.client.PUT('/api/v1/settings/agent/jev-token', { body }),
-    )
-  }
-
-  /** Forgets the stored credential. JEV_TOKEN, if set, applies again. */
-  async removeJevToken(): Promise<AgentSettings> {
-    return this.unwrap(
-      await this.client.DELETE('/api/v1/settings/agent/jev-token'),
-    )
-  }
-
   async getAuditStorage(): Promise<AuditStorageState> {
     return this.unwrap(await this.client.GET('/api/v1/audit/storage'))
   }
@@ -245,6 +253,10 @@ export class ClawApiClient {
 
   async runAuditCleanup(): Promise<AuditCleanupResult> {
     return this.unwrap(await this.client.POST('/api/v1/audit/cleanup'))
+  }
+
+  async listAuditAgents(): Promise<AuditAgentList> {
+    return this.unwrap(await this.client.GET('/api/v1/audit/agents'))
   }
 
   async updateTelemetry(
@@ -385,6 +397,18 @@ export class ClawApiClient {
       await this.client.DELETE('/api/v1/connections/{harness}', {
         params: { path: request },
       }),
+    )
+  }
+
+  async getClaudeDesktopExtension(): Promise<ClaudeDesktopExtension> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/claude-desktop/extension'),
+    )
+  }
+
+  async installClaudeDesktopExtension(): Promise<ClaudeDesktopInstallResult> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/claude-desktop/extension/install'),
     )
   }
 
@@ -674,11 +698,121 @@ export class ClawApiClient {
     )
   }
 
+  async getSkillFlow(request: SkillNameRequest): Promise<SkillFlowSource> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/skills/{name}/flow', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async approveSkillWrite(request: SkillNameRequest): Promise<Skill> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/skills/{name}/ultrafast/approve-write', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async revokeSkillWrite(request: SkillNameRequest): Promise<Skill> {
+    return this.unwrap(
+      await this.client.DELETE(
+        '/api/v1/skills/{name}/ultrafast/approve-write',
+        {
+          params: { path: request },
+        },
+      ),
+    )
+  }
+
+  async getPlan(): Promise<Plan> {
+    return this.unwrap(await this.client.GET('/api/v1/plan'))
+  }
+
+  async getPlanPricing(): Promise<PlanPricing> {
+    return this.unwrap(await this.client.GET('/api/v1/plan/pricing'))
+  }
+
+  async getPlanSavings(): Promise<PlanSavings> {
+    return this.unwrap(await this.client.GET('/api/v1/plan/savings'))
+  }
+
+  async startPlanCheckout(
+    body: StartPlanCheckoutRequest,
+  ): Promise<PlanCheckout> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/plan/checkout', { body }),
+    )
+  }
+
+  async getPlanCheckout(
+    request: PlanCheckoutRequest,
+  ): Promise<PlanCheckoutStatus> {
+    return this.unwrap(
+      await this.client.GET('/api/v1/plan/checkout/{checkoutId}', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async getPlanKey(): Promise<PlanKey> {
+    return this.unwrap(await this.client.GET('/api/v1/plan/key'))
+  }
+
+  /** The key is sent once and never comes back in any reply. */
+  async activatePlanKey(body: ActivatePlanKeyRequest): Promise<PlanKeyChange> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/plan/key/activate', { body }),
+    )
+  }
+
+  async removePlanComputer(
+    request: PlanComputerRequest,
+  ): Promise<PlanKeyChange> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/plan/key/computers/{installId}/remove', {
+        params: { path: request },
+      }),
+    )
+  }
+
+  async renamePlanComputer(
+    request: RenamePlanComputerOperationRequest,
+  ): Promise<PlanKey> {
+    return this.unwrap(
+      await this.client.POST('/api/v1/plan/key/computers/{installId}/rename', {
+        params: { path: { installId: request.installId } },
+        body: { name: request.name },
+      }),
+    )
+  }
+
+  /** The new key is emailed; the reply carries only its hint. */
+  async resetPlanKey(): Promise<PlanKeyChange> {
+    return this.unwrap(await this.client.POST('/api/v1/plan/key/reset'))
+  }
+
+  async cancelPlan(body: CancelPlanRequest = {}): Promise<Plan> {
+    return this.unwrap(await this.client.POST('/api/v1/plan/cancel', { body }))
+  }
+
+  async resumePlan(): Promise<Plan> {
+    return this.unwrap(await this.client.POST('/api/v1/plan/resume'))
+  }
+
+  async openPlanPortal(body: PlanPortalRequest): Promise<PlanPortal> {
+    return this.unwrap(await this.client.POST('/api/v1/plan/portal', { body }))
+  }
+
+  async refreshPlan(): Promise<Plan> {
+    return this.unwrap(await this.client.POST('/api/v1/plan/refresh'))
+  }
+
   private unwrap<T>(result: ApiResult<T | undefined>): T {
     const errorResponse = this.responseClones.get(result.response)
     this.responseClones.delete(result.response)
     if ('error' in result) {
-      throw new ApiResponseError(errorResponse ?? result.response)
+      throw new ApiResponseError(errorResponse ?? result.response, result.error)
     }
     if (result.data === undefined) {
       throw new Error('NEOB API returned an empty success response')
@@ -691,7 +825,7 @@ export class ClawApiClient {
     const errorResponse = this.responseClones.get(result.response)
     this.responseClones.delete(result.response)
     if ('error' in result) {
-      throw new ApiResponseError(errorResponse ?? result.response)
+      throw new ApiResponseError(errorResponse ?? result.response, result.error)
     }
   }
 }

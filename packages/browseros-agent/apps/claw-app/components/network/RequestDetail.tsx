@@ -1,12 +1,12 @@
 import type { NetworkBodyPage } from '@browseros/claw-api'
 import { useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
 import { HeadersPane, TextBodyPane } from '@/components/network/BodyPanes'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   useNetworkRequestBody,
   useNetworkResponseBody,
 } from '@/modules/api/network.hooks'
+import { toast, toastError } from '@/modules/toast/toast'
 import { networkCopy } from '@/screens/network/network.copy'
 import { shouldLoadResponseBody } from '@/screens/network/network.data'
 import {
@@ -98,7 +98,7 @@ export function RequestDetail({
       await navigator.clipboard.writeText(text)
       toast(copy.copied)
     } catch (cause) {
-      toast.error(
+      toastError(
         copy.copyFailed(cause instanceof Error ? cause.message : String(cause)),
       )
     }

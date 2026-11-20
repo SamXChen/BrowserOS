@@ -33,17 +33,29 @@ pub enum NativeFeature {
     /// PR #2908: saved-profile discovery/loading, window/tab identity sidecars, and
     /// profile-scoped routing for History and tab/window creation.
     ProfileTargeting,
+    /// Saved-password inventory, explicit storage and acknowledged native filling, served
+    /// by BrowserOS's own `Passwords` CDP domain.
+    Credentials,
+    /// Saved payment card metadata, card saves and native card filling, served by
+    /// BrowserOS's own `Payments` CDP domain.
+    PaymentCards,
 }
 
 impl NativeFeature {
     /// Every feature, for hosts that publish a flag per feature (the run runtime).
-    pub const ALL: &'static [Self] = &[Self::ProfileTargeting];
+    pub const ALL: &'static [Self] = &[
+        Self::ProfileTargeting,
+        Self::Credentials,
+        Self::PaymentCards,
+    ];
 
     /// Stable camelCase key for machine-readable surfaces such as run's feature flags.
     #[must_use]
     pub const fn key(self) -> &'static str {
         match self {
             Self::ProfileTargeting => "profileTargeting",
+            Self::Credentials => "credentials",
+            Self::PaymentCards => "paymentCards",
         }
     }
 
@@ -118,22 +130,52 @@ struct FeatureSpec {
 }
 
 /// The only place feature requirements live. Keep rows in release order.
-const FEATURES: &[FeatureSpec] = &[FeatureSpec {
-    feature: NativeFeature::ProfileTargeting,
-    label: "profile targeting",
-    min_browseros: BrowserOsVersion::new(0, 51, 1, 3),
-    raw_methods: &["Browser.getProfiles", "Browser.loadProfile"],
-    raw_params: &[
-        ("History.search", "browserContextId"),
-        ("History.getRecent", "browserContextId"),
-        ("History.deleteUrl", "browserContextId"),
-        ("History.deleteRange", "browserContextId"),
-        // Declared before #2908, but older natives accepted and ignored it and opened in the
-        // last-active window. Honoring the selected profile is the new behavior gated here.
-        ("Browser.createTab", "browserContextId"),
-        ("Browser.createWindow", "browserContextId"),
-    ],
-}];
+const FEATURES: &[FeatureSpec] = &[
+    FeatureSpec {
+        feature: NativeFeature::ProfileTargeting,
+        label: "profile targeting",
+        min_browseros: BrowserOsVersion::new(0, 51, 1, 3),
+        raw_methods: &["Browser.getProfiles", "Browser.loadProfile"],
+        raw_params: &[
+            ("History.search", "browserContextId"),
+            ("History.getRecent", "browserContextId"),
+            ("History.deleteUrl", "browserContextId"),
+            ("History.deleteRange", "browserContextId"),
+            // Declared before #2908, but older natives accepted and ignored it and opened in the
+            // last-active window. Honoring the selected profile is the new behavior gated here.
+            ("Browser.createTab", "browserContextId"),
+            ("Browser.createWindow", "browserContextId"),
+        ],
+    },
+    FeatureSpec {
+        feature: NativeFeature::Credentials,
+        label: "credentials",
+        // 0.51.2.1 served these commands from upstream's Autofill domain; 0.51.2.7 moved
+        // them, wire shapes unchanged, into BrowserOS's own Passwords domain.
+        min_browseros: BrowserOsVersion::new(0, 51, 2, 7),
+        raw_methods: &[
+            "Passwords.getContext",
+            "Passwords.listCredentials",
+            "Passwords.addCredential",
+            "Passwords.fillCredential",
+            "Passwords.cancelOperation",
+        ],
+        raw_params: &[],
+    },
+    FeatureSpec {
+        feature: NativeFeature::PaymentCards,
+        label: "payment cards",
+        min_browseros: BrowserOsVersion::new(0, 51, 2, 7),
+        raw_methods: &[
+            "Payments.getContext",
+            "Payments.listCards",
+            "Payments.addCard",
+            "Payments.fillCard",
+            "Payments.cancelOperation",
+        ],
+        raw_params: &[],
+    },
+];
 
 /// The connected browser's native identity, fixed for one server process.
 ///

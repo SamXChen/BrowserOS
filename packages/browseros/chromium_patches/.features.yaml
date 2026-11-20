@@ -186,6 +186,8 @@ features:
       - chrome/browser/extensions/api/browser_os/browser_os_api_helpers.h
       - chrome/browser/extensions/api/browser_os/browser_os_api_utils.cc
       - chrome/browser/extensions/api/browser_os/browser_os_api_utils.h
+      - chrome/browser/extensions/api/browser_os/browser_os_attention_mac.h
+      - chrome/browser/extensions/api/browser_os/browser_os_attention_mac.mm
       - chrome/browser/extensions/api/browser_os/browser_os_change_detector.cc
       - chrome/browser/extensions/api/browser_os/browser_os_change_detector.h
       - chrome/browser/extensions/api/side_panel/side_panel_api.h
@@ -405,6 +407,24 @@ features:
       - "chrome/browser/profiles/profile_manager.cc"
       - "chrome/browser/profiles/profile_manager.h"
 
+      # Explicit password metadata/storage and acknowledged, cancellable filling.
+      - "chrome/browser/devtools/protocol/autofill_handler.cc"
+      - "chrome/browser/devtools/protocol/autofill_handler.h"
+      - "components/password_manager/core/browser/password_store/password_store.cc"
+      - "components/password_manager/core/browser/password_store/password_store.h"
+      - "components/password_manager/core/browser/password_store/password_store_consumer.cc"
+      - "components/password_manager/core/browser/password_store/password_store_interface.h"
+      - "third_party/blink/public/devtools_protocol/domains/Autofill.pdl"
+      - "components/password_manager/core/browser/password_store/get_logins_with_affiliations_request_handler.cc"
+      - "components/password_manager/core/browser/password_store/get_logins_with_affiliations_request_handler.h"
+      - "components/password_manager/core/browser/password_store/login_database.cc"
+      - "components/password_manager/core/browser/password_store/login_database.h"
+      - "components/password_manager/core/browser/password_store/login_database_async_helper.cc"
+      - "components/password_manager/core/browser/password_store/login_database_async_helper.h"
+      - "components/password_manager/core/browser/password_store/password_store_backend.h"
+      - "components/password_manager/core/browser/password_store/password_store_built_in_backend.cc"
+      - "components/password_manager/core/browser/password_store/password_store_built_in_backend.h"
+      - "components/password_manager/core/browser/password_store/password_store_change.h"
   # ── LAYER 5: FIXES ────────────────────────────────────────
 
   chromium-ui-fixes:
@@ -512,3 +532,17 @@ features:
       - extensions/browser/crx_installer.h
       - extensions/browser/external_install_info.cc
       - extensions/browser/external_install_info.h
+
+  no-browser-signin:
+    description: "feat: disable browser sign-in"
+    files:
+      - chrome/browser/signin/account_consistency_mode_manager.cc
+      - chrome/browser/ui/views/profiles/avatar_toolbar_button_state_manager.cc
+
+  disable-browseros-features:
+    description: "feat: --disable-browseros-features switch"
+    files:
+      - "chrome/browser/browseros/customization/"
+      - "chrome/browser/prefs/chrome_command_line_pref_store.cc"
+      - "chrome/browser/ui/views/toolbar/toolbar_view.cc"
+      - "chrome/browser/ui/views/toolbar/avatar_toolbar_button_interface.cc"

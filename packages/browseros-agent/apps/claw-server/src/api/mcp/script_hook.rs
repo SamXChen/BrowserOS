@@ -2,7 +2,7 @@ use crate::{
     api::mcp::dispatch::{ToolCall, ToolIdentity},
     api::mcp::effects::{ownership_claims, tab_groups, tabs_list_view},
     clock::now_epoch_ms,
-    db::audit_log::{RecordToolDispatchInput, bounded_args_json, result_meta},
+    db::audit_log::{RecordToolDispatchInput, redacted_script_args, result_meta},
     ids::DispatchId,
     services::helpers,
 };
@@ -12,7 +12,7 @@ use browseros_mcp::{
     token_estimate::{TOKEN_ESTIMATOR_VERSION, estimate_tool_input_tokens},
 };
 use futures_util::future::BoxFuture;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tracing::warn;
 
 /// Host hook a `run`/`execute` script invokes around each browser primitive.
@@ -39,6 +39,16 @@ impl ScriptInnerCallHook {
 }
 
 impl InnerCallHook for ScriptInnerCallHook {
+    fn mark_sensitive_input(&self) {
+        self.call
+            .sensitive_input
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn hold_card_data<'a>(&'a self, page: u32) -> BoxFuture<'a, ()> {
+        Box::pin(self.call.state.visuals.hold_card_data(page))
+    }
+
     fn acquire_tool_guard<'a>(
         &'a self,
         tool_name: &'a str,
@@ -61,6 +71,11 @@ impl InnerCallHook for ScriptInnerCallHook {
             let Some(page) = page else {
                 return Ok(());
             };
+            if let Some(captcha) = &self.call.state.captcha
+                && let Some(message) = captcha.reservations().busy_message(page)
+            {
+                return Err(message);
+            }
             let Some(identity) = self.identity() else {
                 return Ok(());
             };
@@ -114,8 +129,10 @@ impl InnerCallHook for ScriptInnerCallHook {
         let is_error = record.is_error;
         let duration_ms = record.duration_ms;
         let from_helper = record.from_helper;
+        let file_chooser_open = record.file_chooser_open;
         let output_token_estimate = record.output_token_estimate;
         let raw_args = record.args.clone();
+        let args_json = redacted_script_args(record.method, record.args);
         Box::pin(async move {
             let Some(identity) = self.identity() else {
                 return;
@@ -163,8 +180,8 @@ impl InnerCallHook for ScriptInnerCallHook {
                     .map(|page| page.target_id.as_str().to_string()),
                 url: live.as_ref().map(|page| page.url.clone()),
                 title: live.as_ref().map(|page| page.title.clone()),
-                args_json: bounded_args_json(&raw_args),
-                result_meta: child_result_meta(is_error, from_helper),
+                args_json,
+                result_meta: child_result_meta(is_error, from_helper, file_chooser_open),
                 duration_ms,
                 // None: child rows keep their completion time so they sort after
                 // the parent script dispatch, which is stamped with its start.
@@ -181,7 +198,12 @@ impl InnerCallHook for ScriptInnerCallHook {
                     // code-mode audits show each primitive like granular tools.
                     // Only for page-targeting primitives; page-less ones (windows,
                     // tab groups) have nothing meaningful to shoot.
-                    if page.is_some() {
+                    if page.is_some()
+                        && !self
+                            .call
+                            .sensitive_input
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         crate::api::mcp::observers::audit::persist_screenshot(
                             &self.call.state,
                             self.call.session_id.as_str(),
@@ -307,8 +329,15 @@ impl InnerCallHook for ScriptInnerCallHook {
 /// Result metadata for a child primitive: the standard summary, plus a
 /// `fromHelper` marker when the primitive ran inside a hot-loaded helper, so the
 /// distiller can skip a successful reuse's replayed actions.
-fn child_result_meta(is_error: bool, from_helper: bool) -> String {
-    let base = result_meta(is_error, false, &Value::Null, 0);
+fn child_result_meta(is_error: bool, from_helper: bool, file_chooser_open: bool) -> String {
+    // Carry the same safe interruption marker as a granular action. Script source, paths,
+    // native input ids and arbitrary return values remain outside child presentation metadata.
+    let structured = if file_chooser_open {
+        json!({"fileChooserOpen": true})
+    } else {
+        Value::Null
+    };
+    let base = result_meta(is_error, false, &structured, 0);
     if !from_helper {
         return base;
     }
@@ -326,15 +355,50 @@ mod tests {
     use crate::api::mcp::test_support::tool_call;
     use crate::db::audit_log::ListDispatchesQuery;
     use crate::ids::ConvoId;
-    use browseros_cdp::{CdpError, CdpEvent, SessionId as CdpSessionId};
+    use browseros_cdp::{CdpError, CdpEvent, SessionId as CdpSessionId, TargetedEvents};
     use browseros_core::{BrowserSession, BrowserSessionHooks, CdpConnection};
     use futures_util::future::BoxFuture;
     use serde_json::json;
     use std::sync::Arc;
-    use tokio::sync::broadcast;
+    use tokio::sync::{broadcast, mpsc};
 
     fn hook_for(call: &crate::api::mcp::dispatch::ToolCall) -> ScriptInnerCallHook {
         ScriptInnerCallHook::new(call.clone())
+    }
+
+    #[tokio::test]
+    async fn tests_that_captcha_busy_refuses_script_primitives_before_ownership()
+    -> anyhow::Result<()> {
+        let mut call = tool_call("run", serde_json::json!({"code":"return 1"})).await?;
+        crate::api::mcp::guards::captcha_busy::tests::enable_captcha(&mut call)?;
+        let service = call
+            .state
+            .captcha
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("missing service"))?;
+        let _lease = service
+            .reservations()
+            .try_reserve(42, "cap_test")
+            .map_err(|_| anyhow::anyhow!("busy"))?;
+        let hook = hook_for(&call);
+        let expected = "page 42 is busy: solve_captcha (request cap_test) is working on an unknown CAPTCHA (detecting, 0s). Wait for it to return, then take a fresh snapshot.";
+        assert_eq!(hook.authorize(Some(42)).await, Err(expected.into()));
+        assert!(
+            call.foreign_pages
+                .lock()
+                .map_err(|_| anyhow::anyhow!("poisoned"))?
+                .is_empty()
+        );
+        assert!(hook.authorize(Some(7)).await.is_ok());
+        assert!(hook.authorize(None).await.is_ok());
+        call.identity = None;
+        assert_eq!(
+            hook_for(&call).authorize(Some(42)).await,
+            Err(expected.into())
+        );
+        call.state.captcha = None;
+        assert!(hook_for(&call).authorize(Some(42)).await.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
@@ -449,12 +513,16 @@ mod tests {
     /// `pages.get_info` so the hook can open a session-tab window.
     struct OnePageConnection {
         events: broadcast::Sender<CdpEvent>,
+        targeted: TargetedEvents,
     }
 
     impl OnePageConnection {
         fn new() -> Arc<Self> {
             let (events, _) = broadcast::channel(1);
-            Arc::new(Self { events })
+            Arc::new(Self {
+                events,
+                targeted: TargetedEvents::default(),
+            })
         }
     }
 
@@ -528,6 +596,10 @@ mod tests {
 
         fn events(&self) -> broadcast::Receiver<CdpEvent> {
             self.events.subscribe()
+        }
+
+        fn events_targeted(&self, method: &str) -> mpsc::UnboundedReceiver<CdpEvent> {
+            self.targeted.subscribe(method)
         }
 
         fn is_connected(&self) -> bool {
@@ -739,6 +811,7 @@ mod tests {
             args: &json!([1, "e5"]),
             from_helper: false,
             is_error: false,
+            file_chooser_open: false,
             duration_ms: 3,
             output_token_estimate: 0,
         })
@@ -765,6 +838,7 @@ mod tests {
             args: &json!([4, "e5"]),
             from_helper: false,
             is_error: false,
+            file_chooser_open: true,
             duration_ms: 12,
             output_token_estimate: 42,
         })
@@ -788,6 +862,8 @@ mod tests {
             Some(call.dispatch_id.as_str())
         );
         assert_eq!(child.page_id, Some(4));
+        let meta: Value = serde_json::from_str(child.result_meta.as_deref().unwrap_or("{}"))?;
+        assert_eq!(meta["fileChooserOpen"], true);
         // The inner primitive is measured with the v1 estimator so it no longer
         // taints the session: a non-zero input estimate from the method + args,
         // the passed-through output estimate, and the eligible version.

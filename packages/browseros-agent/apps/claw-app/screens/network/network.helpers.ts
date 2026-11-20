@@ -133,12 +133,6 @@ export function methodTone(method: string): string {
   }
 }
 
-export function splitUrl(url: string): { host: string; path: string } {
-  const parsed = parseUrl(url)
-  if (!parsed) return { host: '', path: url }
-  return { host: parsed.origin, path: `${parsed.pathname}${parsed.search}` }
-}
-
 export function formatTime(ms: number): string {
   return new Date(ms).toLocaleTimeString([], {
     hour: '2-digit',
@@ -388,15 +382,4 @@ export function diffRevisions(
     changes.push('处理器脚本')
   }
   return changes
-}
-
-/** Header lines for display; arrays keep one line per value. */
-export function headerLines(
-  value: NetworkRuleAction['headers'],
-): Array<[string, string[]]> {
-  if (!value) return []
-  return Object.entries(value).map(([name, raw]) => {
-    if (raw === null || raw === undefined) return [name, ['—']]
-    return [name, Array.isArray(raw) ? raw.map(String) : [String(raw)]]
-  })
 }

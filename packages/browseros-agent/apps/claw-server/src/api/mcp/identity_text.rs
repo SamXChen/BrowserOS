@@ -8,10 +8,10 @@
 
 use browseros_core::NativeCapabilities;
 
-use crate::config::PursueOffering;
+use crate::config::{ServerMode, TabGrouping};
 use crate::services::agent_settings::HumanHelp;
 
-use super::prompt::mcp_instructions;
+use super::prompt::{mcp_instructions, with_pursue_guidance};
 
 /// Names that belong to another build or another product. A self-name or a trigger word
 /// must never be one of these: the agent would call NeoB by a name the user did not use,
@@ -65,10 +65,11 @@ fn agent_visible_text_uses_only_the_neob_identity() {
 #[test]
 fn agent_visible_text_introduces_neob() {
     let instructions = mcp_instructions(
+        ServerMode::Desktop,
         HumanHelp::On,
         false,
-        PursueOffering::Absent,
         NativeCapabilities::from_browseros_version(Some("0.51.1.3")),
+        TabGrouping::Automatic,
     );
     assert!(
         instructions.contains("NeoB"),
@@ -101,13 +102,15 @@ fn collect_bare_kernel_names(source: &str, text: &str, violation_list: &mut Vec<
 fn instructions_corpus() -> Vec<(&'static str, String)> {
     let native = NativeCapabilities::from_browseros_version(Some("0.51.1.3"));
     let mut text_list = Vec::new();
-    for human_help in [HumanHelp::On, HumanHelp::Off] {
-        for close_groups in [false, true] {
-            for pursue in [PursueOffering::Absent, PursueOffering::Offered] {
-                text_list.push((
-                    "instructions",
-                    mcp_instructions(human_help, close_groups, pursue, native),
-                ));
+    for mode in [ServerMode::Desktop, ServerMode::Hosted] {
+        for human_help in [HumanHelp::On, HumanHelp::Off] {
+            for grouping in [TabGrouping::Automatic, TabGrouping::Explicit] {
+                for ultrafast in [false, true] {
+                    let instructions =
+                        mcp_instructions(mode, human_help, ultrafast, native, grouping);
+                    text_list.push(("instructions", with_pursue_guidance(instructions.clone())));
+                    text_list.push(("instructions", instructions));
+                }
             }
         }
     }

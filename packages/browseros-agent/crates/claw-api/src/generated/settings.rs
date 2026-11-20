@@ -11,72 +11,24 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// AgentSettings : User settings for the tools NeoB offers to agents.
+/// AgentSettings : User settings for the tools BrowserOS neo offers to agents.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentSettings {
     /// Whether agents are offered request_human_help and await_human_help. When false, agents are told to report a block in their own chat instead.
     #[serde(rename = "humanHelpEnabled")]
     pub human_help_enabled: bool,
-    /// Whether agents should close their task's tab groups when finished. Defaults to false.
-    #[serde(rename = "closeTabGroupsAfterTask")]
-    pub close_tab_groups_after_task: bool,
-    #[serde(rename = "jevTokenSource")]
-    pub jev_token_source: models::JevTokenSource,
+    /// Whether successful MCP tool replies include a tip to close the task's tab group when finished.
+    #[serde(rename = "taskCleanupTipEnabled")]
+    pub task_cleanup_tip_enabled: bool,
 }
 
 impl AgentSettings {
-    /// User settings for the tools NeoB offers to agents.
-    pub fn new(
-        human_help_enabled: bool,
-        close_tab_groups_after_task: bool,
-        jev_token_source: models::JevTokenSource,
-    ) -> AgentSettings {
+    /// User settings for the tools BrowserOS neo offers to agents.
+    pub fn new(human_help_enabled: bool, task_cleanup_tip_enabled: bool) -> AgentSettings {
         AgentSettings {
             human_help_enabled,
-            close_tab_groups_after_task,
-            jev_token_source,
+            task_cleanup_tip_enabled,
         }
-    }
-}
-
-/// JevTokenSource : Where the decision model credential comes from, which decides whether the pursue tool is offered at all. \"settings\" is a token saved through this API, which takes precedence. \"environment\" is JEV_TOKEN in the server's environment. \"none\" means pursue is not offered. The token itself is never returned.
-/// Where the decision model credential comes from, which decides whether the pursue tool is offered at all. \"settings\" is a token saved through this API, which takes precedence. \"environment\" is JEV_TOKEN in the server's environment. \"none\" means pursue is not offered. The token itself is never returned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub enum JevTokenSource {
-    #[serde(rename = "settings")]
-    Settings,
-    #[serde(rename = "environment")]
-    Environment,
-    #[serde(rename = "none")]
-    None,
-}
-
-impl std::fmt::Display for JevTokenSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Settings => write!(f, "settings"),
-            Self::Environment => write!(f, "environment"),
-            Self::None => write!(f, "none"),
-        }
-    }
-}
-
-impl Default for JevTokenSource {
-    fn default() -> JevTokenSource {
-        Self::Settings
-    }
-}
-
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SaveJevTokenRequest {
-    /// The decision model credential. Write only: no endpoint returns it. Saving one takes precedence over JEV_TOKEN in the server's environment.
-    #[serde(rename = "token")]
-    pub token: String,
-}
-
-impl SaveJevTokenRequest {
-    pub fn new(token: String) -> SaveJevTokenRequest {
-        SaveJevTokenRequest { token }
     }
 }
 
@@ -102,21 +54,22 @@ impl TelemetryState {
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UpdateAgentSettingsRequest {
-    #[serde(rename = "humanHelpEnabled")]
-    pub human_help_enabled: bool,
-    /// Whether to close task tab groups when finished. Omission preserves the current value.
+    /// Omit to preserve the saved human help preference.
+    #[serde(rename = "humanHelpEnabled", skip_serializing_if = "Option::is_none")]
+    pub human_help_enabled: Option<bool>,
+    /// Omit to preserve the saved cleanup tip preference.
     #[serde(
-        rename = "closeTabGroupsAfterTask",
+        rename = "taskCleanupTipEnabled",
         skip_serializing_if = "Option::is_none"
     )]
-    pub close_tab_groups_after_task: Option<bool>,
+    pub task_cleanup_tip_enabled: Option<bool>,
 }
 
 impl UpdateAgentSettingsRequest {
-    pub fn new(human_help_enabled: bool) -> UpdateAgentSettingsRequest {
+    pub fn new() -> UpdateAgentSettingsRequest {
         UpdateAgentSettingsRequest {
-            human_help_enabled,
-            close_tab_groups_after_task: None,
+            human_help_enabled: None,
+            task_cleanup_tip_enabled: None,
         }
     }
 }

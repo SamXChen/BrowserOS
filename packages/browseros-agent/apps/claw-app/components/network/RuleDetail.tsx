@@ -1,6 +1,5 @@
 import type { NetworkRule, NetworkRuleTestResult } from '@browseros/claw-api'
 import { useState } from 'react'
-import { toast } from 'sonner'
 import { ProcessorPanel } from '@/components/network/ProcessorPanel'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -23,6 +22,7 @@ import {
   useNetworkRule,
   useNetworkRuleRevisions,
 } from '@/modules/api/network.hooks'
+import { toast } from '@/modules/toast/toast'
 import { networkCopy } from '@/screens/network/network.copy'
 import {
   diffRevisions,

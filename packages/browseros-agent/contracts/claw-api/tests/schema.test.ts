@@ -27,29 +27,6 @@ function yaml(name: string): Record<string, unknown> {
   >
 }
 
-describe('agent settings API schema', () => {
-  test('tests that cleanup is required in responses and optional in updates', () => {
-    const schemas = yaml('schemas/settings.yaml') as Record<
-      string,
-      { required: string[]; properties: Record<string, { type: string }> }
-    >
-    expect(schemas.AgentSettings?.required).toContain('closeTabGroupsAfterTask')
-    expect(
-      schemas.AgentSettings?.properties.closeTabGroupsAfterTask?.type,
-    ).toBe('boolean')
-    expect(schemas.UpdateAgentSettingsRequest?.required).toEqual([
-      'humanHelpEnabled',
-    ])
-    expect(
-      schemas.UpdateAgentSettingsRequest?.properties.closeTabGroupsAfterTask
-        ?.type,
-    ).toBe('boolean')
-    expect(
-      schemas.UpdateAgentSettingsRequest?.properties.closeTabGroupsAfterTask,
-    ).not.toHaveProperty('nullable', true)
-  })
-})
-
 describe('session visual API schema', () => {
   test('owns preview and screenshot routes beneath sessions', () => {
     const openapi = yaml('openapi.yaml') as {
@@ -370,5 +347,79 @@ describe('skills API schema', () => {
       'description',
       'installs',
     ])
+  })
+})
+
+describe('plan API schema', () => {
+  const routes = {
+    '/api/v1/plan': ['plan', 'get', 'getPlan'],
+    '/api/v1/plan/pricing': ['pricing', 'get', 'getPlanPricing'],
+    '/api/v1/plan/savings': ['savings', 'get', 'getPlanSavings'],
+    '/api/v1/plan/checkout': ['checkout', 'post', 'startPlanCheckout'],
+    '/api/v1/plan/checkout/{checkoutId}': [
+      'checkoutStatus',
+      'get',
+      'getPlanCheckout',
+    ],
+    '/api/v1/plan/key': ['key', 'get', 'getPlanKey'],
+    '/api/v1/plan/key/activate': ['activateKey', 'post', 'activatePlanKey'],
+    '/api/v1/plan/key/computers/{installId}/remove': [
+      'removeComputer',
+      'post',
+      'removePlanComputer',
+    ],
+    '/api/v1/plan/key/computers/{installId}/rename': [
+      'renameComputer',
+      'post',
+      'renamePlanComputer',
+    ],
+    '/api/v1/plan/key/reset': ['resetKey', 'post', 'resetPlanKey'],
+    '/api/v1/plan/cancel': ['cancel', 'post', 'cancelPlan'],
+    '/api/v1/plan/resume': ['resume', 'post', 'resumePlan'],
+    '/api/v1/plan/portal': ['portal', 'post', 'openPlanPortal'],
+    '/api/v1/plan/refresh': ['refresh', 'post', 'refreshPlan'],
+  } as const
+
+  test('registers every plan route under its operation', () => {
+    const openapi = yaml('openapi.yaml') as {
+      paths: Record<string, unknown>
+    }
+    const paths = yaml('paths/plan.yaml') as Record<
+      string,
+      Record<string, { operationId?: string }>
+    >
+
+    expect(Object.keys(routes)).toHaveLength(14)
+    for (const [route, [name, method, operationId]] of Object.entries(routes)) {
+      expect(openapi.paths[route]).toEqual({
+        $ref: `./paths/plan.yaml#/${name}`,
+      })
+      expect(paths[name]?.[method]?.operationId).toBe(operationId)
+    }
+    expect(Object.keys(paths).toSorted()).toEqual(
+      Object.values(routes)
+        .map(([name]) => name)
+        .toSorted(),
+    )
+  })
+
+  test('never carries a licence key out of the server', () => {
+    const schemas = yaml('schemas/plan.yaml') as Record<
+      string,
+      { properties?: Record<string, unknown> }
+    >
+    const withKeyField = Object.entries(schemas)
+      .filter(([, schema]) => schema.properties && 'key' in schema.properties)
+      .map(([name]) => name)
+
+    expect(withKeyField.toSorted()).toEqual([
+      'ActivatePlanKeyRequest',
+      'PlanKeyChange',
+    ])
+    expect(schemas.PlanKeyChange?.properties?.key).toMatchObject({
+      allOf: [{ $ref: '#/PlanKey' }],
+    })
+    expect(schemas.PlanKey?.properties).not.toHaveProperty('key')
+    expect(schemas.PlanCheckoutStatus?.properties).not.toHaveProperty('key')
   })
 })

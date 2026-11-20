@@ -276,7 +276,13 @@ impl SkillReconciler {
                 // File-level replacement also preserves matching SKILL.md timestamps
                 // when only a missing/outdated ownership marker needs repair.
                 let result = if owns_name {
-                    replace_owned_instructions(target, spec, &desired_hash, actual_hash.as_deref(), &self.owner)
+                    replace_owned_instructions(
+                        target,
+                        spec,
+                        &desired_hash,
+                        actual_hash.as_deref(),
+                        &self.owner,
+                    )
                 } else {
                     replace(target, spec, &desired_hash, &self.owner)
                 };

@@ -3,11 +3,15 @@ pub mod entities;
 pub mod feedback_invite;
 mod migration;
 pub mod network;
+pub mod pursue_runs;
 pub mod recording_index;
 pub mod run_error_budget;
 pub mod session_efficiency_stats;
 pub mod session_tabs;
 pub mod skills;
+pub mod tool_calls_daily;
+pub mod ultrafast_ledger;
+pub mod ultrafast_runs;
 
 pub use audit_log::AuditLog;
 pub use network::NetworkRepository;
@@ -356,6 +360,7 @@ mod tests {
             "skills",
             "skill_runs",
             "skill_run_marks",
+            "skill_flows",
             "task_search",
             "seaql_migrations",
         ] {
@@ -459,7 +464,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 22);
+        assert_eq!(migrations.len(), 30);
         assert_eq!(
             migrations[0].try_get::<String>("", "version")?,
             "m0001_baseline"
@@ -542,39 +547,71 @@ mod tests {
         );
         assert_eq!(
             migrations[20].try_get::<String>("", "version")?,
-            "m0021_network_rules"
+            "m0021_add_skill_flows"
         );
         assert_eq!(
             migrations[21].try_get::<String>("", "version")?,
-            "m0022_network_rules_v2"
+            "m0022_add_mode_to_skill_runs"
+        );
+        assert_eq!(
+            migrations[22].try_get::<String>("", "version")?,
+            "m0023_add_tool_calls_daily"
+        );
+        assert_eq!(
+            migrations[23].try_get::<String>("", "version")?,
+            "m0024_add_write_consent_to_skill_flows"
+        );
+        assert_eq!(
+            migrations[24].try_get::<String>("", "version")?,
+            "m0025_add_ultrafast_sessions"
+        );
+        assert_eq!(
+            migrations[25].try_get::<String>("", "version")?,
+            "m0026_add_site_and_outcome_to_ultrafast_sessions"
+        );
+        assert_eq!(
+            migrations[26].try_get::<String>("", "version")?,
+            "m0027_backfill_task_active_duration"
+        );
+        assert_eq!(
+            migrations[27].try_get::<String>("", "version")?,
+            "m0028_align_efficiency_active_duration"
+        );
+        assert_eq!(
+            migrations[28].try_get::<String>("", "version")?,
+            "m0029_network_rules"
+        );
+        assert_eq!(
+            migrations[29].try_get::<String>("", "version")?,
+            "m0030_network_rules_v2"
         );
         Ok(())
     }
 
-    struct MigratorThrough21;
+    struct MigratorThrough29;
 
     #[async_trait::async_trait]
-    impl MigratorTrait for MigratorThrough21 {
+    impl MigratorTrait for MigratorThrough29 {
         fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-            Migrator::migrations().into_iter().take(21).collect()
+            Migrator::migrations().into_iter().take(29).collect()
         }
     }
 
-    struct MigratorThrough22;
+    struct MigratorThrough30;
 
     #[async_trait::async_trait]
-    impl MigratorTrait for MigratorThrough22 {
+    impl MigratorTrait for MigratorThrough30 {
         fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-            Migrator::migrations().into_iter().take(22).collect()
+            Migrator::migrations().into_iter().take(30).collect()
         }
     }
 
     #[tokio::test]
-    async fn migration_m0022_recreates_network_tables() -> anyhow::Result<()> {
+    async fn migration_m0030_recreates_network_tables() -> anyhow::Result<()> {
         let directory = tempdir()?;
         let path = directory.path().join(DATABASE_FILENAME);
 
-        let (before, _) = open_and_migrate::<MigratorThrough21>(&path).await?;
+        let (before, _) = open_and_migrate::<MigratorThrough29>(&path).await?;
         before
             .execute_unprepared(
                 "INSERT INTO net_rules (id, scope_kind, enabled, state, current_revision, generation, created_at, updated_at) \
@@ -583,7 +620,7 @@ mod tests {
             .await?;
         before.close().await?;
 
-        let (database, _) = open_and_migrate::<MigratorThrough22>(&path).await?;
+        let (database, _) = open_and_migrate::<MigratorThrough30>(&path).await?;
 
         let tables: Vec<String> = database
             .query_all(Statement::from_string(
@@ -614,7 +651,7 @@ mod tests {
         assert_eq!(
             rules.try_get::<i64>("", "count")?,
             0,
-            "m0022 drops earlier network rows"
+            "m0030 drops earlier network rows"
         );
 
         let columns: Vec<String> = database
@@ -649,7 +686,7 @@ mod tests {
             .expect("migration row");
         assert_eq!(
             version.try_get::<String>("", "version")?,
-            "m0022_network_rules_v2"
+            "m0030_network_rules_v2"
         );
 
         database.close().await?;
@@ -782,6 +819,7 @@ mod tests {
         };
         assert!(unknown.contains(&"m0007_add_session_efficiency_stats".to_string()));
         assert!(unknown.contains(&"m0020_add_feedback_invite_snooze".to_string()));
+        assert!(unknown.contains(&"m0022_add_mode_to_skill_runs".to_string()));
         conn.close().await?;
 
         // The database is left intact: no backup was made and it still carries every migration.
@@ -790,7 +828,7 @@ mod tests {
         let migration_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM seaql_migrations")
             .fetch_one(&mut conn)
             .await?;
-        assert_eq!(migration_count, 22);
+        assert_eq!(migration_count, 30);
         conn.close().await?;
         Ok(())
     }
@@ -899,7 +937,7 @@ mod tests {
                 "SELECT version FROM seaql_migrations ORDER BY version".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 22);
+        assert_eq!(migrations.len(), 30);
         assert_eq!(
             migrations
                 .iter()
@@ -922,7 +960,7 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("migration count missing"))?
             .try_get::<i64>("", "count")?;
-        assert_eq!(migration_count, 22);
+        assert_eq!(migration_count, 30);
         Ok(())
     }
 
@@ -1058,7 +1096,97 @@ mod tests {
                 "SELECT version FROM seaql_migrations".to_string(),
             ))
             .await?;
-        assert_eq!(migrations.len(), 22);
+        assert_eq!(migrations.len(), 30);
+        Ok(())
+    }
+
+    /// The Linux pre-flight doctor prunes `seaql_migrations` rows based on the
+    /// packaged binary, even when a newer self-updated server wrote them. The
+    /// schema and user data are still present, so startup must tolerate DDL that
+    /// is already applied, re-record the migrations, and preserve those rows.
+    #[tokio::test]
+    async fn repeated_doctor_ledger_pruning_keeps_startup_recoverable() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("missing").join(DATABASE_FILENAME);
+        let Some(parent) = path.parent() else {
+            anyhow::bail!("database path has no parent");
+        };
+        assert!(!parent.exists());
+
+        let first = Database::open(&path).await?;
+        first
+            .connection()
+            .execute_unprepared(
+                "INSERT INTO feedback_invite \
+                    (install_id, shown_at_ms, outcome, settled_at_ms, dismissed_at_ms) \
+                 VALUES ('install-1', 1000, 'dismissed', 2000, 1500)",
+            )
+            .await?;
+        first
+            .connection()
+            .execute_unprepared(
+                "INSERT INTO run_error_budget (day, sent, suppressed) \
+                 VALUES ('2026-09-30', 7, 3)",
+            )
+            .await?;
+        first.close().await?;
+
+        for attempt in 1..=2 {
+            let mut conn = SqliteConnection::connect_with(&sqlite_options(&path)).await?;
+            let deleted = sqlx::query("DELETE FROM seaql_migrations WHERE version IN (?, ?, ?, ?)")
+                .bind("m0017_add_run_error_budget")
+                .bind("m0018_add_feedback_invite")
+                .bind("m0019_add_feedback_invite_dismissal")
+                .bind("m0020_add_feedback_invite_snooze")
+                .execute(&mut conn)
+                .await?
+                .rows_affected();
+            assert_eq!(deleted, 4, "doctor pass {attempt} should prune four rows");
+            conn.close().await?;
+
+            let reopened = Database::open(&path).await?;
+            let migrations = reopened
+                .connection()
+                .query_all(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT version FROM seaql_migrations".to_string(),
+                ))
+                .await?;
+            assert_eq!(
+                migrations.len(),
+                30,
+                "doctor pass {attempt} was not repaired"
+            );
+
+            let feedback = reopened
+                .connection()
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT dismissed_at_ms FROM feedback_invite WHERE install_id = 'install-1'"
+                        .to_string(),
+                ))
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("feedback invite row should survive"))?;
+            assert_eq!(
+                feedback.try_get::<Option<i64>>("", "dismissed_at_ms")?,
+                Some(1500)
+            );
+
+            let budget = reopened
+                .connection()
+                .query_one(Statement::from_string(
+                    DbBackend::Sqlite,
+                    "SELECT sent, suppressed FROM run_error_budget WHERE day = '2026-09-30'"
+                        .to_string(),
+                ))
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("run-error budget row should survive"))?;
+            assert_eq!(budget.try_get::<i64>("", "sent")?, 7);
+            assert_eq!(budget.try_get::<i64>("", "suppressed")?, 3);
+            reopened.close().await?;
+        }
+
+        assert!(!append_suffix(&path, ".bak").exists());
         Ok(())
     }
 

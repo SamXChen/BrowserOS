@@ -7,7 +7,12 @@ use crate::{
             prelude::{AgentSessionEnds, AgentSessionStarts, Tasks, ToolDispatches},
             tasks, tool_dispatches,
         },
+        pursue_runs::{PursueRun, pursue_outcome, pursue_run, pursue_step_share},
         session_efficiency_stats::ELIGIBLE_TOKEN_ESTIMATOR_VERSION,
+        ultrafast_runs::{
+            UltrafastRunStats, finished_without_agent, pursue_reads, ultrafast_run_stats,
+            ultrafast_runs,
+        },
     },
     error::AppResult,
     ids::DispatchId,
@@ -16,15 +21,36 @@ use browseros_mcp::token_estimate::estimate_tool_output_tokens;
 use rmcp::model::ContentBlock;
 use sea_orm::{
     ActiveValue::{NotSet, Set},
-    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
-    QuerySelect, Statement, TransactionTrait,
-    sea_query::{Condition, Expr, ExprTrait, Func, OnConflict},
+    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement, TransactionTrait,
+    sea_query::{Condition, Expr, ExprTrait, Func, OnConflict, Query, SelectStatement},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use url::Url;
 
 pub use crate::db::entities::tool_dispatches::Model as ToolDispatchRow;
+
+/// A session where ultrafast did work: what it counts toward the savings totals, what neo
+/// measured, what it did with pursue, and when its last row was recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UltrafastSession {
+    pub session_id: String,
+    /// The measured stats plus the time of pursue calls recorded before pages were counted.
+    pub totals: UltrafastRunStats,
+    pub measured: Option<UltrafastRunStats>,
+    pub pursue: Option<PursueRun>,
+    /// How long each ultrafast run in the session took.
+    pub run_durations: Vec<i64>,
+    /// neo's browser steps during pursue and every browser step in the session, when neo took any.
+    pub pursue_step_share: Option<(i64, i64)>,
+    /// When neo's first and last ultrafast runs in the session started, not the agent's calls.
+    pub first_run_at: i64,
+    pub last_run_at: i64,
+    /// The site the task ran on, as the task list shows it.
+    pub site: Option<String>,
+}
 
 const ARGS_JSON_MAX: usize = 4096;
 const RESULT_META_MAX: usize = 4096;
@@ -229,6 +255,14 @@ impl From<agent_session_ends::Model> for SessionEndEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, FromQueryResult)]
+pub struct AuditAgentSummary {
+    pub slug: String,
+    pub label: String,
+    pub task_count: i64,
+    pub last_started_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTasksResult {
@@ -236,14 +270,33 @@ pub struct ListTasksResult {
     pub next_cursor: Option<i64>,
 }
 
+/// How many times a session id was opened and closed. A session can still gain rows while any
+/// start lacks its end: teardown writes the end only after the session's in-flight calls have
+/// drained and been recorded, and a reused id (legacy transport) opens a second life after the
+/// first one ended.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionLifecycle {
+    pub starts: u64,
+    pub ends: u64,
+    /// When the latest end was recorded.
+    pub last_end_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ListTasksQuery {
     pub agent_id: Option<String>,
     pub slug: Option<String>,
+    /// Exact `clientInfo.name` a session's start recorded. Unlike `slug`, which follows a
+    /// declared `agentName` when there is one, this is what the client reported itself as.
+    pub client_name: Option<String>,
     pub status: Option<TaskStatus>,
+    /// Only tasks that failed or were stopped, the ones worth a second look.
+    pub needs_attention: bool,
     pub site: Option<String>,
     pub search: Option<String>,
     pub since: Option<i64>,
+    /// Inclusive upper bound on `started_at`, the mirror of `since`.
+    pub until: Option<i64>,
     pub cursor: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -461,12 +514,12 @@ impl AuditLog {
         // row. An existence check would see the first end and skip the second start, so the
         // reused session would stay `live` forever, which is the exact state being repaired.
         //
-        // The end is stamped at `created_at + duration_ms`, not `created_at`. A dispatch row
-        // records when its tool *started*, so a session killed part way through a ninety
-        // second `run` would otherwise have its end backdated to before that run began.
-        // Local-tool rows stamp write time instead, where adding the duration overshoots by
-        // a few milliseconds; an upper bound on the last evidence of life is the right
-        // direction to err.
+        // The end is stamped at `created_at + duration_ms`, not `created_at`. A top-level
+        // dispatch row records when its tool *started*, so a session killed part way through
+        // a ninety second `run` would otherwise have its end backdated to before that run
+        // began. Steps inside a script stamp write time instead, where adding the duration
+        // overshoots by a few milliseconds; an upper bound on the last evidence of life is
+        // the right direction to err.
         let statement = Statement::from_sql_and_values(
             DbBackend::Sqlite,
             r"
@@ -582,24 +635,38 @@ impl AuditLog {
                         Expr::col(tasks::Column::Site).into(),
                         Expr::value(""),
                     ]))
-                    .like(pattern),
+                    .like(pattern.clone()),
                 );
             if !summary_matches.is_empty() {
                 any = any.add(tasks::Column::SessionId.is_in(summary_matches));
             }
-            any
+            // The label above prefers `clientInfo.title`, so the reported name is matched
+            // through the session's start rows.
+            any.add(tasks::Column::SessionId.in_subquery(sessions_started_by(
+                Func::lower(Expr::col(agent_session_starts::Column::ClientName)).like(pattern),
+            )))
         });
         let condition = Condition::all()
             .add(tasks::Column::DispatchCount.gt(0))
             .add_option(query.agent_id.map(|value| tasks::Column::AgentId.eq(value)))
             .add_option(query.slug.map(|value| tasks::Column::Slug.eq(value)))
+            .add_option(query.client_name.map(|value| {
+                tasks::Column::SessionId.in_subquery(sessions_started_by(
+                    agent_session_starts::Column::ClientName.eq(value),
+                ))
+            }))
             .add_option(
                 query
                     .status
                     .map(|value| tasks::Column::Status.eq(value.as_str())),
             )
+            .add_option(query.needs_attention.then(|| {
+                tasks::Column::Status
+                    .is_in([TaskStatus::Failed.as_str(), TaskStatus::Cancelled.as_str()])
+            }))
             .add_option(query.site.map(|value| tasks::Column::Site.eq(value)))
             .add_option(query.since.map(|value| tasks::Column::StartedAt.gte(value)))
+            .add_option(query.until.map(|value| tasks::Column::StartedAt.lte(value)))
             .add_option(search_condition)
             .add_option(query.cursor.map(|value| tasks::Column::CursorId.lt(value)));
         let mut tasks = Tasks::find()
@@ -619,6 +686,72 @@ impl AuditLog {
             None
         };
         Ok(ListTasksResult { tasks, next_cursor })
+    }
+
+    /// Every agent with a listable task, most tasks first. Covers the whole history rather than a
+    /// page, so History can offer all of them as filters.
+    pub async fn list_agents(&self) -> AppResult<Vec<AuditAgentSummary>> {
+        // SQLite fills a bare column in a MAX() aggregate from the row holding the maximum, so
+        // `label` is the one from the agent's most recent task.
+        let statement = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            r"
+            SELECT slug,
+                   agent_label AS label,
+                   COUNT(*) AS task_count,
+                   MAX(started_at) AS last_started_at
+            FROM tasks
+            WHERE dispatch_count > 0
+            GROUP BY slug
+            ORDER BY task_count DESC, last_started_at DESC
+            ",
+            [],
+        );
+        Ok(AuditAgentSummary::find_by_statement(statement)
+            .all(self.db.connection())
+            .await?)
+    }
+
+    pub async fn session_lifecycle(&self, session_id: &str) -> AppResult<SessionLifecycle> {
+        let conn = self.db.connection();
+        let starts = AgentSessionStarts::find()
+            .filter(agent_session_starts::Column::SessionId.eq(session_id))
+            .count(conn)
+            .await?;
+        let ends = AgentSessionEnds::find()
+            .filter(agent_session_ends::Column::SessionId.eq(session_id))
+            .count(conn)
+            .await?;
+        let last_end_at = AgentSessionEnds::find()
+            .filter(agent_session_ends::Column::SessionId.eq(session_id))
+            .order_by_desc(agent_session_ends::Column::CreatedAt)
+            .one(conn)
+            .await?
+            .map(|end| end.created_at);
+        Ok(SessionLifecycle {
+            starts,
+            ends,
+            last_end_at,
+        })
+    }
+
+    /// The `clientInfo.name` each session's first start recorded, keyed by session id.
+    /// Dispatch rows carry a display label instead, which prefers `clientInfo.title`; sessions
+    /// with no start row are missing from the map.
+    pub async fn client_names(&self, session_ids: &[String]) -> AppResult<HashMap<String, String>> {
+        let mut names = HashMap::with_capacity(session_ids.len());
+        if session_ids.is_empty() {
+            return Ok(names);
+        }
+        let starts = AgentSessionStarts::find()
+            .filter(agent_session_starts::Column::SessionId.is_in(session_ids.iter().cloned()))
+            .order_by_asc(agent_session_starts::Column::Id)
+            .all(self.db.connection())
+            .await?;
+        for start in starts {
+            names.entry(start.session_id).or_insert(start.client_name);
+        }
+        Ok(names)
     }
 
     /// Returns the audit summary for one session without loading its dispatch history.
@@ -658,6 +791,168 @@ impl AuditLog {
             start_event,
             end_event,
         }))
+    }
+
+    /// Ultrafast stats for each listed session that had an ultrafast run (a skill run without the
+    /// agent, or a pursue that read the page); sessions without one are missing from the map.
+    pub async fn ultrafast_run_stats(
+        &self,
+        session_ids: &[String],
+    ) -> AppResult<HashMap<String, UltrafastRunStats>> {
+        if session_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let candidates = ToolDispatches::find()
+            .filter(tool_dispatches::Column::SessionId.is_in(session_ids.iter().cloned()))
+            .filter(tool_dispatches::Column::ToolName.is_in(["run_skill", "pursue"]))
+            .all(self.db.connection())
+            .await?;
+        Ok(self
+            .ultrafast_sessions(candidates)
+            .await?
+            .into_iter()
+            .filter_map(|session| session.measured.map(|stats| (session.session_id, stats)))
+            .collect())
+    }
+
+    /// What neo did with pursue in each listed session that had a pursue call finish or hand
+    /// back; sessions without one are missing from the map.
+    pub async fn pursue_runs(
+        &self,
+        session_ids: &[String],
+    ) -> AppResult<HashMap<String, PursueRun>> {
+        if session_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.db.connection();
+        let with_pursue = ToolDispatches::find()
+            .filter(tool_dispatches::Column::SessionId.is_in(session_ids.iter().cloned()))
+            .filter(tool_dispatches::Column::ToolName.eq("pursue"))
+            .all(conn)
+            .await?
+            .into_iter()
+            .filter(|row| pursue_outcome(row).is_some())
+            .map(|row| row.session_id)
+            .collect::<std::collections::HashSet<_>>();
+        if with_pursue.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = ToolDispatches::find()
+            .filter(tool_dispatches::Column::SessionId.is_in(with_pursue))
+            .filter(tool_dispatches::Column::ToolName.is_in(["pursue", "act", "navigate"]))
+            .order_by_asc(tool_dispatches::Column::CreatedAt)
+            .order_by_asc(tool_dispatches::Column::Id)
+            .all(conn)
+            .await?;
+        let mut grouped: HashMap<String, Vec<ToolDispatchRow>> = HashMap::new();
+        for row in rows {
+            grouped.entry(row.session_id.clone()).or_default().push(row);
+        }
+        Ok(grouped
+            .into_iter()
+            .filter_map(|(session_id, rows)| pursue_run(&rows).map(|run| (session_id, run)))
+            .collect())
+    }
+
+    /// Every session where ultrafast did work (a skill that ran without the agent, or a pursue
+    /// that finished or handed back), newest run first.
+    pub async fn all_ultrafast_sessions(&self) -> AppResult<Vec<UltrafastSession>> {
+        let candidates = ToolDispatches::find()
+            .filter(tool_dispatches::Column::ToolName.is_in(["run_skill", "pursue"]))
+            .all(self.db.connection())
+            .await?;
+        let mut sessions = self.ultrafast_sessions(candidates).await?;
+        sessions.sort_by(|a, b| {
+            b.last_run_at
+                .cmp(&a.last_run_at)
+                .then_with(|| b.session_id.cmp(&a.session_id))
+        });
+        Ok(sessions)
+    }
+
+    /// The listed sessions where ultrafast did work, such as the ones about to be deleted.
+    pub async fn ultrafast_sessions_in(
+        &self,
+        session_ids: &[String],
+    ) -> AppResult<Vec<UltrafastSession>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let candidates = ToolDispatches::find()
+            .filter(tool_dispatches::Column::SessionId.is_in(session_ids.iter().cloned()))
+            .filter(tool_dispatches::Column::ToolName.is_in(["run_skill", "pursue"]))
+            .all(self.db.connection())
+            .await?;
+        self.ultrafast_sessions(candidates).await
+    }
+
+    /// Loads the sessions whose `run_skill` or `pursue` rows show ultrafast did work and derives
+    /// each one's stats and pursue steps from all of its rows.
+    async fn ultrafast_sessions(
+        &self,
+        candidates: Vec<ToolDispatchRow>,
+    ) -> AppResult<Vec<UltrafastSession>> {
+        let mut sessions = Vec::new();
+        let with_runs = candidates
+            .into_iter()
+            .filter(|row| {
+                (row.tool_name == "run_skill" && finished_without_agent(row))
+                    || pursue_reads(row).is_some()
+                    || pursue_outcome(row).is_some()
+            })
+            .map(|row| row.session_id)
+            .collect::<std::collections::HashSet<_>>();
+        if with_runs.is_empty() {
+            return Ok(sessions);
+        }
+        let conn = self.db.connection();
+        let sites = Tasks::find()
+            .filter(tasks::Column::SessionId.is_in(with_runs.iter().cloned()))
+            .all(conn)
+            .await?
+            .into_iter()
+            .filter_map(|task| Some((task.session_id, task.site?)))
+            .collect::<HashMap<_, _>>();
+        let rows = ToolDispatches::find()
+            .filter(tool_dispatches::Column::SessionId.is_in(with_runs))
+            .order_by_asc(tool_dispatches::Column::CreatedAt)
+            .order_by_asc(tool_dispatches::Column::Id)
+            .all(conn)
+            .await?;
+        let mut grouped: HashMap<String, Vec<ToolDispatchRow>> = HashMap::new();
+        for row in rows {
+            grouped.entry(row.session_id.clone()).or_default().push(row);
+        }
+        for (session_id, dispatches) in grouped {
+            let measured = ultrafast_run_stats(&dispatches);
+            let pursue = pursue_run(&dispatches);
+            if measured.is_none() && pursue.is_none() {
+                continue;
+            }
+            // Pursue calls from before pages were counted still add the time neo worked.
+            let unmeasured_ms = dispatches
+                .iter()
+                .filter(|row| pursue_outcome(row).is_some() && pursue_reads(row).is_none())
+                .map(|row| row.duration_ms.unwrap_or(0).max(0))
+                .fold(0_i64, i64::saturating_add);
+            let mut totals = measured.unwrap_or_default();
+            totals.duration_ms = totals.duration_ms.saturating_add(unmeasured_ms);
+            let runs = ultrafast_runs(&dispatches);
+            let first_run_at = runs.iter().map(|run| run.at).min().unwrap_or(0);
+            let last_run_at = runs.iter().map(|run| run.at).max().unwrap_or(0);
+            sessions.push(UltrafastSession {
+                site: sites.get(&session_id).cloned(),
+                session_id,
+                totals,
+                measured,
+                pursue,
+                run_durations: runs.iter().map(|run| run.duration_ms).collect(),
+                pursue_step_share: pursue_step_share(&dispatches),
+                first_run_at,
+                last_run_at,
+            });
+        }
+        Ok(sessions)
     }
 
     pub async fn list_session_screenshots(
@@ -783,7 +1078,24 @@ async fn recompute_task<C: ConnectionTrait>(conn: &C, session_id: &str) -> AppRe
     let last_at = last_dispatch
         .map(|row| row.created_at)
         .unwrap_or(started_at);
-    let duration_ms = ended_at.unwrap_or(last_at).saturating_sub(started_at);
+    // Active span: first activity to the last tool finishing. The session-end timestamp is the
+    // retirement moment (idle sweep / stop), not when work stopped, so it must not inflate the
+    // duration with the idle tail before teardown.
+    // Child steps inside a script stamp their write (completion) time, so created_at is already
+    // their end; adding duration would double-count a slow child (e.g. a long wait inside a run).
+    // Top-level rows stamp the tool start, so their end is created_at + duration.
+    let last_activity_end = dispatches
+        .iter()
+        .map(|row| {
+            if row.parent_dispatch_id.is_some() {
+                row.created_at
+            } else {
+                row.created_at + row.duration_ms.unwrap_or(0)
+            }
+        })
+        .max()
+        .unwrap_or(last_at);
+    let duration_ms = last_activity_end.saturating_sub(started_at).max(0);
     let error_count = dispatches
         .iter()
         .filter(|row| result_is_error(row.result_meta.as_deref()))
@@ -879,6 +1191,16 @@ async fn query_dispatches_for_session<C: ConnectionTrait>(
         .order_by_asc(tool_dispatches::Column::Id)
         .all(conn)
         .await?)
+}
+
+/// `SELECT session_id FROM agent_session_starts WHERE <condition>`, for filtering tasks by
+/// what their start rows recorded.
+fn sessions_started_by(condition: impl sea_orm::sea_query::IntoCondition) -> SelectStatement {
+    Query::select()
+        .column(agent_session_starts::Column::SessionId)
+        .from(AgentSessionStarts)
+        .cond_where(condition)
+        .to_owned()
 }
 
 async fn query_start<C: ConnectionTrait>(
@@ -977,6 +1299,119 @@ pub fn bounded_args_json(value: &serde_json::Value) -> String {
     truncate_utf8(&safe_stringify(value), ARGS_JSON_MAX)
 }
 
+/// Replaces a redacted secret with this fixed marker. The original length is
+/// dropped on purpose so the ledger leaks neither the value nor its size.
+const REDACTED_MARKER: &str = "[redacted]";
+
+/// Scrubs explicit password fields even without runtime hints, before bounding.
+/// Hints additionally redact selected field values or all values/script source.
+/// Typed credential metadata remains readable; raw CDP strings use the separate
+/// context-aware script boundary below, including when their JSON is malformed.
+pub fn redacted_args_json(
+    value: &serde_json::Value,
+    hints: Option<&browseros_mcp::AuditHints>,
+) -> String {
+    // Explicit password fields are sensitive even when admission/cancellation
+    // prevented the handler from supplying runtime hints. Scrub before bounding,
+    // since truncation can otherwise persist a prefix of the secret.
+    let mut redacted = value.clone();
+    redact_secret_fields(&mut redacted);
+    if let Some(hints) = hints {
+        redact_args(&mut redacted, hints);
+    }
+    bounded_args_json(&redacted)
+}
+
+/// Script CDP parameters can be malformed, so parsing cannot authorize keeping
+/// their bytes. Password and card params are omitted wholesale at this string
+/// boundary; typed tool options keep metadata and scrub password and card fields.
+pub fn redacted_script_args(method: &str, args: &serde_json::Value) -> String {
+    let mut sanitized = args.clone();
+    if let Some(values) = sanitized.as_array_mut()
+        && browseros_mcp::tools::sensitive::is_sensitive_primitive(method, values)
+    {
+        let parameter = match method {
+            "cdp" => Some(1),
+            "cdpJsonForPage" => Some(2),
+            _ => None,
+        };
+        if let Some(parameter) = parameter.and_then(|index| values.get_mut(index)) {
+            *parameter = json!(REDACTED_MARKER);
+        }
+    }
+    redacted_args_json(&sanitized, None)
+}
+
+fn redact_secret_fields(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, value) in object {
+                // `card` holds a card number and security code.
+                if key == "password" || key == "card" {
+                    *value = json!(REDACTED_MARKER);
+                    changed = true;
+                } else {
+                    changed |= redact_secret_fields(value);
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                changed |= redact_secret_fields(value);
+            }
+        }
+        serde_json::Value::String(text) => {
+            // Raw CDP paramsJson crosses as a serialized object in an argument
+            // array. Preserve other strings byte-for-byte, including JSON whose
+            // formatting the script might rely on. Parent source uses its hint.
+            if let Ok(mut nested) = serde_json::from_str::<serde_json::Value>(text)
+                && (nested.is_object() || nested.is_array())
+                && redact_secret_fields(&mut nested)
+                && let Ok(scrubbed) = serde_json::to_string(&nested)
+            {
+                *text = scrubbed;
+                changed = true;
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn redact_args(value: &mut serde_json::Value, hints: &browseros_mcp::AuditHints) {
+    let serde_json::Value::Object(object) = value else {
+        return;
+    };
+    let redact_top = hints.redact_all_values
+        || object
+            .get("ref")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|ref_id| hints.sensitive_refs.iter().any(|r| r == ref_id));
+    if redact_top {
+        for key in ["value", "text", "code"] {
+            if object.contains_key(key) {
+                object.insert(key.to_string(), json!(REDACTED_MARKER));
+            }
+        }
+    }
+    if let Some(serde_json::Value::Array(fields)) = object.get_mut("fields") {
+        for field in fields {
+            let serde_json::Value::Object(entry) = field else {
+                continue;
+            };
+            let matches = hints.redact_all_values
+                || entry
+                    .get("ref")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|ref_id| hints.sensitive_refs.iter().any(|r| r == ref_id));
+            if matches && entry.contains_key("value") {
+                entry.insert("value".to_string(), json!(REDACTED_MARKER));
+            }
+        }
+    }
+}
+
 pub fn result_meta(
     is_error: bool,
     cancelled: bool,
@@ -1003,6 +1438,32 @@ pub fn result_meta(
         .and_then(serde_json::Value::as_str)
     {
         summary["cancellationKind"] = json!(bounded_json_string(cancellation_kind));
+    }
+    // Preserve only the interruption marker, never filesystem paths or chooser node ids.
+    // The extension renders selection as a separate step from opening the chooser.
+    if structured_content
+        .get("fileChooserOpen")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        summary["fileChooserOpen"] = json!(true);
+    }
+    // pursue's ending, so the task timeline can tell a hand back from a finish.
+    if let Some(outcome) = structured_content
+        .get("outcome")
+        .and_then(serde_json::Value::as_str)
+        .filter(|outcome| matches!(*outcome, "completed" | "handed_back" | "cancelled"))
+    {
+        summary["outcome"] = json!(outcome);
+        // What neo read itself during the run, for the session's ultrafast numbers.
+        for key in ["pagesRead", "pageTokens"] {
+            if let Some(count) = structured_content
+                .get(key)
+                .and_then(serde_json::Value::as_u64)
+            {
+                summary[key] = json!(count);
+            }
+        }
     }
     let serialized = summary.to_string();
     debug_assert!(serialized.len() <= RESULT_META_MAX);
@@ -1046,9 +1507,10 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 mod tests {
     use super::{
         AuditLog, ListTasksQuery, RecordToolDispatchInput, TaskStatus, bounded_args_json,
-        result_meta,
+        redacted_args_json, result_meta,
     };
     use crate::db::{DATABASE_FILENAME, Database};
+    use browseros_mcp::AuditHints;
     use browseros_mcp::token_estimate::estimate_tool_output_tokens;
     use rmcp::model::ContentBlock;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
@@ -1064,6 +1526,135 @@ mod tests {
     }
     use serde_json::json;
     use tempfile::tempdir;
+
+    fn parse(json_text: &str) -> serde_json::Value {
+        serde_json::from_str(json_text)
+            .unwrap_or_else(|err| panic!("args_json is valid JSON: {err}"))
+    }
+
+    #[test]
+    fn malformed_credential_cdp_parameters_are_redacted_before_parsing() {
+        let args = json!([
+            1,
+            "Passwords.fillCredential",
+            "{\"password\":\"synthetic-malformed-secret\",}"
+        ]);
+        let out = super::redacted_script_args("cdpJsonForPage", &args);
+        assert!(!out.contains("synthetic-malformed-secret"));
+        assert!(out.contains("Passwords.fillCredential"));
+        assert!(out.contains("[redacted]"));
+    }
+
+    #[test]
+    fn malformed_card_cdp_parameters_are_redacted_before_parsing() {
+        for method in ["Payments.fillCard", "Autofill.trigger"] {
+            let args = json!([1, method, "{\"card\":{\"number\":\"4111111111111111\",}"]);
+            let out = super::redacted_script_args("cdpJsonForPage", &args);
+            assert!(!out.contains("4111111111111111"));
+            assert!(out.contains(method));
+            assert!(out.contains("[redacted]"));
+        }
+    }
+
+    #[test]
+    fn redacts_card_objects_in_tool_options() {
+        let args = json!({
+            "action": "fill",
+            "page": 1,
+            "card": {"number": "4111111111111111", "expiryMonth": 12, "expiryYear": 2030, "cvc": "987"}
+        });
+        let output = redacted_args_json(&args, None);
+        assert!(!output.contains("4111111111111111"));
+        assert!(!output.contains("987"));
+        assert!(output.contains("\"action\":\"fill\""));
+        assert!(output.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_passwords_in_script_arrays_and_serialized_cdp_parameters() {
+        let args = json!([
+            1,
+            "Passwords.fillCredential",
+            json!({"username":"synthetic-user", "password":"synthetic-cdp-secret"}).to_string()
+        ]);
+        let output = redacted_args_json(&args, None);
+        assert!(!output.contains("synthetic-cdp-secret"));
+        assert!(output.contains("synthetic-user"));
+        assert!(output.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacted_args_json_passes_through_without_hints() {
+        // No hints behaves exactly like bounded_args_json, byte for byte.
+        let args = json!({ "kind": "fill", "ref": "e1", "value": "secret" });
+        assert_eq!(redacted_args_json(&args, None), bounded_args_json(&args));
+        let empty = AuditHints::default();
+        assert_eq!(
+            redacted_args_json(&args, Some(&empty)),
+            bounded_args_json(&args)
+        );
+    }
+
+    #[test]
+    fn redacted_args_json_redacts_a_single_ref_fill() {
+        let args = json!({ "kind": "fill", "ref": "e1", "value": "hunter2" });
+        let hints = AuditHints {
+            sensitive_refs: vec!["e1".to_string()],
+            ..AuditHints::default()
+        };
+        let out = parse(&redacted_args_json(&args, Some(&hints)));
+        assert_eq!(out["value"], json!("[redacted]"));
+        // A ref the tool did not flag is untouched.
+        let other = AuditHints {
+            sensitive_refs: vec!["e2".to_string()],
+            ..AuditHints::default()
+        };
+        assert_eq!(
+            parse(&redacted_args_json(&args, Some(&other)))["value"],
+            json!("hunter2")
+        );
+    }
+
+    #[test]
+    fn redacted_args_json_redacts_only_the_flagged_field_entry() {
+        // A login form: the password ref is flagged, the username next to it is not.
+        let args = json!({
+            "kind": "fill",
+            "fields": [
+                { "ref": "e1", "value": "alice" },
+                { "ref": "e2", "value": "hunter2" },
+            ],
+        });
+        let hints = AuditHints {
+            sensitive_refs: vec!["e2".to_string()],
+            ..AuditHints::default()
+        };
+        let out = parse(&redacted_args_json(&args, Some(&hints)));
+        assert_eq!(out["fields"][0]["value"], json!("alice"));
+        assert_eq!(out["fields"][1]["value"], json!("[redacted]"));
+    }
+
+    #[test]
+    fn redacted_args_json_redact_all_covers_value_text_and_every_field() {
+        let args = json!({
+            "kind": "fill",
+            "value": "cvv-123",
+            "text": "typed-secret",
+            "fields": [
+                { "ref": "e1", "value": "card" },
+                { "ref": "e2", "value": "exp" },
+            ],
+        });
+        let hints = AuditHints {
+            redact_all_values: true,
+            ..AuditHints::default()
+        };
+        let out = parse(&redacted_args_json(&args, Some(&hints)));
+        assert_eq!(out["value"], json!("[redacted]"));
+        assert_eq!(out["text"], json!("[redacted]"));
+        assert_eq!(out["fields"][0]["value"], json!("[redacted]"));
+        assert_eq!(out["fields"][1]["value"], json!("[redacted]"));
+    }
 
     fn dispatch(session_id: &str, url: &str, is_error: bool) -> RecordToolDispatchInput {
         RecordToolDispatchInput {
@@ -1112,6 +1703,36 @@ mod tests {
 
         assert!(meta.len() <= 4096);
         serde_json::from_str::<serde_json::Value>(&meta)?;
+        Ok(())
+    }
+
+    #[test]
+    fn result_metadata_keeps_only_a_known_pursue_outcome() -> anyhow::Result<()> {
+        let handed_back = result_meta(false, false, &json!({ "outcome": "handed_back" }), 1);
+        let free_text = result_meta(false, false, &json!({ "outcome": "anything else" }), 1);
+
+        let handed_back: serde_json::Value = serde_json::from_str(&handed_back)?;
+        let free_text: serde_json::Value = serde_json::from_str(&free_text)?;
+        assert_eq!(handed_back["outcome"], "handed_back");
+        assert!(free_text.get("outcome").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn result_metadata_keeps_what_pursue_read() -> anyhow::Result<()> {
+        let pursued = result_meta(
+            false,
+            false,
+            &json!({ "outcome": "completed", "pagesRead": 5, "pageTokens": 18_204 }),
+            1,
+        );
+        let other_tool = result_meta(false, false, &json!({ "pagesRead": 5 }), 1);
+
+        let pursued: serde_json::Value = serde_json::from_str(&pursued)?;
+        let other_tool: serde_json::Value = serde_json::from_str(&other_tool)?;
+        assert_eq!(pursued["pagesRead"], 5);
+        assert_eq!(pursued["pageTokens"], 18_204);
+        assert!(other_tool.get("pagesRead").is_none());
         Ok(())
     }
 
@@ -1392,6 +2013,85 @@ mod tests {
         Ok(())
     }
 
+    /// Duration measures the active span (first activity to the last tool finishing), not the
+    /// wall-clock to teardown. Idle auto-complete stamps the session-end event minutes after the
+    /// last tool, so that idle tail must not inflate the reported duration.
+    #[tokio::test]
+    async fn duration_excludes_the_idle_tail_before_teardown() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let audit = AuditLog::new(Database::open(dir.path().join(DATABASE_FILENAME)).await?);
+
+        // No session start row, so the span is anchored on the first dispatch. Both dispatches are
+        // stamped in the past; the end event below is stamped at now(), the idle tail.
+        const BASE: i64 = 1_700_000_000_000;
+        let mut first = dispatch("idle", "https://one.example.com", false);
+        first.created_at = Some(BASE);
+        first.duration_ms = 10;
+        audit.record_tool_dispatch(first).await?;
+        let mut last = dispatch("idle", "https://two.example.com", false);
+        last.created_at = Some(BASE + 5_000);
+        last.duration_ms = 200;
+        audit.record_tool_dispatch(last).await?;
+
+        audit
+            .record_session_end("idle", "closed", Some("idle auto-complete"))
+            .await?;
+
+        let task = audit
+            .get_task("idle")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("task missing"))?;
+        // Active span: (last dispatch created_at + its duration) - first dispatch created_at.
+        assert_eq!(
+            task.summary.duration_ms, 5_200,
+            "duration must be the active span, not the wall-clock including the idle tail"
+        );
+        let ended_at = task
+            .summary
+            .ended_at
+            .ok_or_else(|| anyhow::anyhow!("end missing"))?;
+        assert!(
+            ended_at > BASE + 5_200,
+            "the late end event ({ended_at}) is the retirement moment, well past the active span"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn duration_excludes_a_slow_completion_stamped_child() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let audit = AuditLog::new(Database::open(dir.path().join(DATABASE_FILENAME)).await?);
+
+        // A top-level script stamps its tool START, so its end is created_at + duration. A child
+        // step inside the script stamps its WRITE (completion) time, so its created_at is already
+        // its end; adding its duration would double-count it. Here a 30s child inside a 2s script
+        // must not inflate the active span.
+        const BASE: i64 = 1_700_000_000_000;
+        let mut script = dispatch("slow-child", "https://script.example.com", false);
+        script.created_at = Some(BASE);
+        script.duration_ms = 2_000;
+        let script_id = script.dispatch_id.clone();
+        audit.record_tool_dispatch(script).await?;
+
+        let mut child = dispatch("slow-child", "https://child.example.com", false);
+        child.created_at = Some(BASE + 1_900);
+        child.duration_ms = 30_000;
+        child.parent_dispatch_id = Some(script_id);
+        audit.record_tool_dispatch(child).await?;
+
+        let task = audit
+            .get_task("slow-child")
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("task missing"))?;
+        // Active span is the top-level script's end (BASE + 2_000) minus its start (BASE), not the
+        // child overshoot (BASE + 1_900 + 30_000 - BASE = 31_900).
+        assert_eq!(
+            task.summary.duration_ms, 2_000,
+            "a slow completion-stamped child must not inflate the active span"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn task_summary_reports_unmeasured_for_any_legacy_dispatch() -> anyhow::Result<()> {
         let dir = tempdir()?;
@@ -1541,6 +2241,91 @@ mod tests {
             .await?;
         assert_eq!(failed.tasks.len(), 1);
         assert_eq!(failed.tasks[0].session_id, "b1");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn agents_cover_the_whole_history_with_their_latest_label() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let audit = AuditLog::new(Database::open(dir.path().join(DATABASE_FILENAME)).await?);
+        for (session, slug, label, at) in [
+            ("c1", "claude-code", "Claude", 1_000),
+            ("x1", "codex", "Codex", 2_000),
+            ("c2", "claude-code", "Claude Code", 3_000),
+        ] {
+            audit
+                .record_tool_dispatch(RecordToolDispatchInput {
+                    slug: slug.to_string(),
+                    agent_label: label.to_string(),
+                    created_at: Some(at),
+                    ..dispatch(session, "https://example.com", false)
+                })
+                .await?;
+        }
+        // A session that never dispatched has no task in History, so its agent is left out.
+        audit
+            .record_session_start("z1", "agent-z", "zed", "Zed", "zed", "1.0")
+            .await?;
+
+        let agents = audit.list_agents().await?;
+        let rows = agents
+            .iter()
+            .map(|agent| {
+                (
+                    agent.slug.as_str(),
+                    agent.label.as_str(),
+                    agent.task_count,
+                    agent.last_started_at,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows,
+            [
+                ("claude-code", "Claude Code", 2, 3_000),
+                ("codex", "Codex", 1, 2_000),
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn needs_attention_pages_only_failed_and_stopped_tasks() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let audit = AuditLog::new(Database::open(dir.path().join(DATABASE_FILENAME)).await?);
+        // f1 failed (three errors), d1 finished, f2 was stopped, d2 finished.
+        for _ in 0..3 {
+            audit
+                .record_tool_dispatch(dispatch("f1", "https://example.com", true))
+                .await?;
+        }
+        audit.record_session_end("f1", "closed", None).await?;
+        for (session, end) in [("d1", "closed"), ("f2", "cancelled"), ("d2", "closed")] {
+            audit
+                .record_tool_dispatch(dispatch(session, "https://example.com", false))
+                .await?;
+            audit.record_session_end(session, end, None).await?;
+        }
+        let first = audit
+            .list_tasks(ListTasksQuery {
+                needs_attention: true,
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await?;
+        assert_eq!(first.tasks.len(), 1);
+        assert_eq!(first.tasks[0].session_id, "f2");
+        let second = audit
+            .list_tasks(ListTasksQuery {
+                needs_attention: true,
+                cursor: first.next_cursor,
+                limit: Some(1),
+                ..Default::default()
+            })
+            .await?;
+        assert_eq!(second.tasks.len(), 1);
+        assert_eq!(second.tasks[0].session_id, "f1");
+        assert_eq!(second.next_cursor, None);
         Ok(())
     }
 

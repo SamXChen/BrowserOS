@@ -1,5 +1,5 @@
-import { toast } from 'sonner'
 import { RulesPanel } from '@/components/network/RulesPanel'
+import { toast, toastError } from '@/modules/toast/toast'
 import { networkCopy } from '@/screens/network/network.copy'
 import type { NetworkScreenData } from '@/screens/network/network.data'
 import type {
@@ -40,7 +40,7 @@ export function RulesTab({
     try {
       await data.actions.toggleRule(id, enabled)
     } catch (cause) {
-      toast.error(copy.errors.ruleAction(errorText(cause)))
+      toastError(copy.errors.ruleAction(errorText(cause)))
     } finally {
       onPending(null)
     }
@@ -71,7 +71,7 @@ export function RulesTab({
                 },
               },
             }),
-          (cause: unknown) => toast.error(errorText(cause)),
+          (cause: unknown) => toastError(errorText(cause)),
         )
       }}
       onDeleteAll={onDeleteAll}
@@ -82,12 +82,12 @@ export function RulesTab({
       onReload={(rule, ignoreCache) => {
         const tabId = rule.scope === 'tab' ? rule.scopeTab : undefined
         if (tabId === undefined) {
-          toast.error(copy.rules.menu.tabClosedTooltip)
+          toastError(copy.rules.menu.tabClosedTooltip)
           return
         }
         void data.actions.reloadTab(tabId, ignoreCache).then(
           () => toast(copy.rules.menu.reloaded(String(tabId))),
-          (cause: unknown) => toast.error(errorText(cause)),
+          (cause: unknown) => toastError(errorText(cause)),
         )
       }}
       onRename={(rule, name) => data.actions.renameRule(rule.id, name)}

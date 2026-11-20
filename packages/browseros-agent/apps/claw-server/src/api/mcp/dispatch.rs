@@ -5,7 +5,9 @@ use crate::{
     ids::{ConvoId, DispatchId, SessionId},
     services::sessions::Session,
 };
-use browseros_core::{BrowserSession, PageId, pages::PageInfo, target::BrowserView};
+use browseros_core::{
+    BrowserSession, PageId, pages::PageInfo, pointer::Pointer, target::BrowserView,
+};
 use browseros_mcp::{
     BrowserToolDefaults, BrowserToolOptions, OutputFileAccess, TargetStore, ToolCtx, ToolDef,
     ToolResult, execute_tool,
@@ -22,7 +24,7 @@ use tracing::warn;
 
 const CANCELLATION_REASON: &str = "Operation cancelled by the User";
 const CLIENT_CANCELLATION_ERROR: &str = "Request cancelled by client";
-pub(crate) const ARBITRARY_SCRIPT_TOOLS: &[&str] = &["run", "evaluate"];
+pub(crate) const ARBITRARY_SCRIPT_TOOLS: &[&str] = &["run", "evaluate_in_page"];
 const DISPATCH_ERROR_TEXT_MAX: usize = 200;
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -83,6 +85,10 @@ pub struct ToolCall {
     /// from its arguments the way it is for a granular tool. The script hook records what
     /// the script actually touched, and `effects::page_ownership_notice` reports it.
     pub foreign_pages: Arc<std::sync::Mutex<std::collections::BTreeMap<u32, String>>>,
+    /// Set when the call may carry passwords or card data. Shared with script
+    /// hooks, including calls that fail or are cancelled before they can return
+    /// runtime audit hints.
+    pub sensitive_input: Arc<std::sync::atomic::AtomicBool>,
     /// Original snapshots and deep dispatch guards, captured before detached grouping.
     /// A reusable PageId must never let a later callback adopt its replacement tab.
     pub(crate) created_page_snapshots:
@@ -134,11 +140,22 @@ impl ToolCall {
             ToolFlags::default()
         };
         Self {
+            // Conservatively classify secret-bearing source before target admission
+            // or execution. The bridge also marks dynamic calls.
+            sensitive_input: Arc::new(std::sync::atomic::AtomicBool::new(
+                browseros_mcp::tools::sensitive::is_sensitive_tool(tool_name)
+                    || tool_name == "run"
+                        && raw_args
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .is_some_and(browseros_mcp::tools::sensitive::source_may_hold_secrets),
+            )),
             foreign_pages: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
             created_page_snapshots: Arc::default(),
             catalog,
             tool_index,
             raw_args,
+            output_files,
             session_id,
             identity,
             browser_session,
@@ -153,7 +170,6 @@ impl ToolCall {
             flags,
             state,
             dispatch_id: DispatchId::new(),
-            output_files,
         }
     }
 
@@ -242,6 +258,7 @@ pub struct NamedToolObserver {
 // the user's tabs and on other agents' tabs; it is simply told whose they are, by
 // `effects::page_ownership_notice`. See that module for why.
 const GUARDS: &[ToolGuard] = &[
+    guards::captcha_busy::guard,
     guards::navigate_scheme::guard,
     guards::browser_connected::guard,
 ];
@@ -274,6 +291,10 @@ const EFFECTS: &[NamedToolEffect] = &[
         run: effects::page_ownership_notice::apply,
     },
     NamedToolEffect {
+        name: "captcha-status",
+        run: effects::captcha_status::apply,
+    },
+    NamedToolEffect {
         // Also an appended label: a saved profile target the native could not apply.
         name: "scope-notice",
         run: effects::scope_notice::apply,
@@ -289,6 +310,11 @@ const EFFECTS: &[NamedToolEffect] = &[
 // (saveHelper/listHelpers/readHelper, discovery, hot-load) but does not
 // auto-distill. Re-add a NamedToolObserver for `distill::distill` to re-enable.
 const OBSERVERS: &[NamedToolObserver] = &[
+    NamedToolObserver {
+        // Reads the script before anything is redacted; writes only a local file.
+        name: "journal",
+        run: observers::journal::apply,
+    },
     NamedToolObserver {
         name: "audit",
         run: observers::audit::apply,
@@ -321,6 +347,10 @@ async fn dispatch_tool_call_with(
     effects: &[NamedToolEffect],
     observers: &[NamedToolObserver],
 ) -> Result<CallToolResult, McpError> {
+    // A transport or idle timeout may mint a successor session. The persisted task
+    // correlation, rather than that replaceable live ID, owns saved outputs.
+    let task = call.state.targets.canonical_task(&call.session_id).await;
+    call.output_files = call.output_files.for_session(task.as_str());
     if let Some(identity) = &call.identity
         && !identity
             .session
@@ -349,6 +379,13 @@ async fn dispatch_tool_call_with(
             );
         }
 
+        // A filled card number shows in plain text. Hold the page out of every
+        // capture before the fill starts, until the page shows another document.
+        if let Some(page) =
+            browseros_mcp::tools::sensitive::card_fill_page(call.tool().name, &call.raw_args)
+        {
+            call.state.visuals.hold_card_data(page).await;
+        }
         match execute_with_cancellation(&call).await {
             DispatchExecution::ProtocolCancelled => {
                 tracing::info!(
@@ -401,7 +438,6 @@ async fn dispatch_tool_call_with(
     } else {
         (false, false)
     };
-    let has_output_schema = call.tool().output_schema.is_some();
     if teardown_before_finish && operator_stop_requested {
         let cancellation = operator_cancellation_result();
         call.dispatch_cancel.cancel();
@@ -413,7 +449,7 @@ async fn dispatch_tool_call_with(
     }
     call.dispatch_cancel.cancel();
     call.cancel.cancel();
-    result.map(|result| wire_result(result, has_output_schema))
+    result.map(|result| wire_result(result, true))
 }
 
 async fn run_guards(call: &ToolCall, guards: &[ToolGuard]) -> Option<ToolResult> {
@@ -483,36 +519,38 @@ async fn execute_with_cancellation(call: &ToolCall) -> DispatchExecution {
     if call.client_cancel.is_cancelled() || call.cancel.is_cancelled() {
         return DispatchExecution::ProtocolCancelled;
     }
-    let result = match &call.view {
-        Some(view) => {
-            // The same captured view reaches direct primitives and tool-backed calls.
-            // The hook adds ownership labels and child audit rows, never scope authority.
-            let is_script = ARBITRARY_SCRIPT_TOOLS.contains(&call.tool().name);
-            let inner_call_hook: Option<Arc<dyn browseros_mcp::InnerCallHook>> =
-                if is_script && call.identity.is_some() {
-                    Some(
-                        Arc::new(crate::api::mcp::script_hook::ScriptInnerCallHook::new(
-                            call.clone(),
-                        )) as Arc<dyn browseros_mcp::InnerCallHook>,
-                    )
-                } else {
-                    None
-                };
-            // Hot-load the helpers the agent's owned-tab hosts make relevant, so
-            // the script can call them by name. Cheap-gated when no helpers exist.
-            let preloaded_helpers = match &call.identity {
-                Some(identity) if is_script => {
-                    crate::api::mcp::helper_runtime::preload_helpers(
-                        &call.state,
-                        &identity.ownership_key,
-                        view,
-                    )
-                    .await
-                }
-                _ => Vec::new(),
+    let ctx = if let Some(view) = call
+        .view
+        .as_ref()
+        .filter(|_| call.tool().requires_browser())
+    {
+        // The captured view reaches every browser primitive. Output handlers declare
+        // no browser dependency and never construct a view or load page helpers.
+        let is_script = ARBITRARY_SCRIPT_TOOLS.contains(&call.tool().name);
+        let inner_call_hook: Option<Arc<dyn browseros_mcp::InnerCallHook>> =
+            if is_script && call.identity.is_some() {
+                Some(
+                    Arc::new(crate::api::mcp::script_hook::ScriptInnerCallHook::new(
+                        call.clone(),
+                    )) as Arc<dyn browseros_mcp::InnerCallHook>,
+                )
+            } else {
+                None
             };
-            let ctx = ToolCtx::new(BrowserToolOptions {
-                browser: view.clone(),
+        let preloaded_helpers = match &call.identity {
+            Some(identity) if is_script => {
+                crate::api::mcp::helper_runtime::preload_helpers(
+                    &call.state,
+                    &identity.ownership_key,
+                    view,
+                )
+                .await
+            }
+            _ => Vec::new(),
+        };
+        Some(
+            ToolCtx::new(BrowserToolOptions {
+                browser: view.clone().with_pointer(Pointer::default()),
                 target: Some(call.target_store.clone()),
                 defaults: BrowserToolDefaults {
                     default_window_id: None,
@@ -530,28 +568,31 @@ async fn execute_with_cancellation(call: &ToolCall) -> DispatchExecution {
                             .map(|identity| identity.agent_label.clone()),
                     ),
                 )),
-            });
-            // A tab group is destroyed when its last page is reparented. Explicit
-            // placement must share the detached grouper's conversation lock, so a
-            // callback cannot erase a group after we return its successful ID.
-            let execution = async {
-                // `run` acquires per inner tool through ScriptInnerCallHook,
-                // never for the whole script or for unrelated primitives.
-                let _guard = call
-                    .acquire_group_operation_guard(call.tool().name, &call.raw_args)
-                    .await
-                    .map_err(|()| browseros_mcp::framework::ToolError::Cancelled)?;
-                execute_tool(call.tool(), call.raw_args.clone(), &ctx).await
-            };
-            match execution.await {
-                Ok(result) => result,
-                Err(browseros_mcp::framework::ToolError::Cancelled) => {
-                    ToolResult::error(format!("{} failed: cancelled", call.tool().name))
-                }
-                Err(error) => ToolResult::error(format!("{} failed: {error}", call.tool().name)),
-            }
+            })
+            .with_run_policy(call.state.config.behavior.run_policy),
+        )
+    } else {
+        None
+    };
+    let dependencies = ctx
+        .as_ref()
+        .map(browseros_mcp::ToolExecution::from)
+        .unwrap_or(browseros_mcp::ToolExecution::Outputs(&call.output_files));
+    let execution = async {
+        // Explicit grouping shares the detached grouper's conversation lock. `run`
+        // instead acquires per inner operation through its hook, never for the script.
+        let _guard = call
+            .acquire_group_operation_guard(call.tool().name, &call.raw_args)
+            .await
+            .map_err(|()| browseros_mcp::framework::ToolError::Cancelled)?;
+        execute_tool(call.tool(), call.raw_args.clone(), dependencies).await
+    };
+    let result = match execution.await {
+        Ok(result) => result,
+        Err(browseros_mcp::framework::ToolError::BrowserRequired) => {
+            ToolResult::error(browser_unavailable_message(&call.state).await)
         }
-        None => ToolResult::error(browser_unavailable_message(&call.state).await),
+        Err(error) => ToolResult::error(format!("{} failed: {error}", call.tool().name)),
     };
     let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
     if call.dispatch_cancel.is_cancelled() {
@@ -612,15 +653,15 @@ pub(super) fn operator_cancellation_result() -> ToolResult {
             "cancellationReason": CANCELLATION_REASON,
             "cancellationKind": "cockpit.operator-cancelled"
         })),
+        audit_hints: None,
     }
 }
 
-fn wire_result(result: ToolResult, has_output_schema: bool) -> CallToolResult {
-    // Ordered effects retain structured content internally; the default BrowserClaw
-    // wire envelope exposes content blocks only. The exception is a tool that
-    // advertises an output_schema (e.g. `run`): a spec-compliant client rejects the
-    // call unless the promised structured content is actually delivered, so keep it.
-    let structured = if has_output_schema {
+fn wire_result(result: ToolResult, include_structured: bool) -> CallToolResult {
+    // Public structured data and output references belong on the wire even when a tool
+    // has no output schema. Only dispatch-layer cancellation suppresses its envelope
+    // because it is not an instance of the interrupted tool's promised output type.
+    let structured = if include_structured {
         result.structured_content
     } else {
         None
@@ -694,6 +735,165 @@ pub fn linked_cancel_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Opens `url` through `tool` on a fresh synthetic browser under `behavior`, awaits the
+    /// grouping work the effect would otherwise detach, and returns the call with the group
+    /// id the page ended up in.
+    async fn open_with_behavior(
+        tool: &str,
+        raw_args: Value,
+        url: &str,
+        mode: crate::config::ServerMode,
+        behavior: crate::config::Behavior,
+    ) -> anyhow::Result<(ToolCall, Option<String>)> {
+        use crate::api::mcp::test_support::{
+            ProfileConnection, current_session, tool_call_with_behavior,
+        };
+        let native = ProfileConnection::new().with_default_profile();
+        let browser = current_session(native.clone());
+        browser.pages.list().await?;
+        let mut call = tool_call_with_behavior(tool, raw_args, mode, behavior).await?;
+        call.browser_session = Some(browser.clone());
+        call.view = Some(BrowserView::capture(browser.clone(), None, None).await);
+        let result = dispatch_tool_call(call.clone()).await?;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let text = result
+            .content
+            .iter()
+            .filter_map(ContentBlock::as_text)
+            .map(|text| text.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !behavior.tab_grouping.is_automatic() {
+            assert!(!text.contains("tab group is being started"), "{text}");
+        }
+        let page = browser
+            .pages
+            .list()
+            .await?
+            .into_iter()
+            .find(|page| page.url == url)
+            .ok_or_else(|| anyhow::anyhow!("{url} was not opened"))?;
+        // The same worker the effect and the script hook detach; awaiting it here makes the
+        // outcome deterministic instead of racing a background task.
+        let captured = effects::tab_groups::created_page(&call, page.page_id.0).await;
+        effects::tab_groups::run_tab_group_work(call.clone(), captured).await;
+        let group = browser
+            .pages
+            .get_info(page.page_id.clone())
+            .await
+            .and_then(|page| page.group_id);
+        Ok((call, group))
+    }
+
+    /// The behaviour, not the mode, decides grouping: explicit leaves `tabs new` and a script's
+    /// `browser.open` ungrouped with no session group recorded, in either mode, and automatic
+    /// still groups them, in either mode.
+    #[tokio::test]
+    async fn tests_that_only_automatic_grouping_groups_pages_the_agent_did_not_place()
+    -> anyhow::Result<()> {
+        use crate::config::{Behavior, ServerMode, TabGrouping};
+        let url = "https://synthetic.test/placement";
+        for mode in [ServerMode::Desktop, ServerMode::Hosted] {
+            for tab_grouping in [TabGrouping::Automatic, TabGrouping::Explicit] {
+                for script in [false, true] {
+                    let (tool, args) = if script {
+                        (
+                            "run",
+                            json!({"code": format!("return await browser.open('{url}');")}),
+                        )
+                    } else {
+                        ("tabs", json!({"action": "new", "url": url}))
+                    };
+                    let (call, group) = open_with_behavior(
+                        tool,
+                        args,
+                        url,
+                        mode,
+                        Behavior {
+                            tab_grouping,
+                            ..Behavior::default()
+                        },
+                    )
+                    .await?;
+                    let key = call
+                        .identity
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("identity missing"))?
+                        .ownership_key
+                        .clone();
+                    let recorded = call.state.sessions.ownership().tab_group_ref(&key).await;
+                    let case = format!("{mode:?} {tab_grouping:?} script={script}");
+                    assert_eq!(group.is_some(), tab_grouping.is_automatic(), "{case}");
+                    assert_eq!(recorded.is_some(), tab_grouping.is_automatic(), "{case}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Explicit grouping still honours a named group, and naming one does not make it the
+    /// session's default: the next unnamed page stays ungrouped.
+    #[tokio::test]
+    async fn tests_that_explicit_grouping_places_named_groups_without_adopting_them()
+    -> anyhow::Result<()> {
+        use crate::{
+            api::mcp::test_support::{ProfileConnection, current_session, tool_call_with_behavior},
+            config::{Behavior, ServerMode, TabGrouping},
+        };
+        let explicit = Behavior {
+            tab_grouping: TabGrouping::Explicit,
+            ..Behavior::default()
+        };
+        let native = ProfileConnection::new().with_default_profile();
+        let browser = current_session(native.clone());
+        browser.pages.list().await?;
+        let view = BrowserView::capture(browser.clone(), None, None).await;
+        let group = view
+            .cdp(
+                "Browser.createTabGroup",
+                json!({"tabIds": [104], "title": "harness layout"}),
+                None,
+            )
+            .await?["group"]["groupId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("group missing"))?
+            .to_string();
+        let mut groups_seen = Vec::new();
+        for (url, named) in [
+            ("https://synthetic.test/named", Some(group.as_str())),
+            ("https://synthetic.test/unnamed", None),
+        ] {
+            let mut args = json!({"action": "new", "url": url});
+            if let Some(named) = named {
+                args["groupId"] = json!(named);
+            }
+            let mut call =
+                tool_call_with_behavior("tabs", args, ServerMode::Hosted, explicit).await?;
+            call.browser_session = Some(browser.clone());
+            call.view = Some(BrowserView::capture(browser.clone(), None, None).await);
+            let result = dispatch_tool_call(call.clone()).await?;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+            let page = browser
+                .pages
+                .list()
+                .await?
+                .into_iter()
+                .find(|page| page.url == url)
+                .ok_or_else(|| anyhow::anyhow!("{url} was not opened"))?;
+            let captured = effects::tab_groups::created_page(&call, page.page_id.0).await;
+            effects::tab_groups::run_tab_group_work(call.clone(), captured).await;
+            groups_seen.push(
+                browser
+                    .pages
+                    .get_info(page.page_id.clone())
+                    .await
+                    .and_then(|page| page.group_id),
+            );
+        }
+        assert_eq!(groups_seen, vec![Some(group), None]);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn deferred_grouping_preserves_explicit_group_update() -> anyhow::Result<()> {
@@ -1937,9 +2137,9 @@ mod tests {
             .audit_worker
             .flush_session(call.session_id.as_str())
             .await?;
-        let wire = wire_result(final_result.clone(), false);
+        let wire = wire_result(final_result.clone(), true);
         assert_eq!(wire.content.len(), 2);
-        assert_eq!(wire.structured_content, None);
+        assert_eq!(wire.structured_content, final_result.structured_content);
 
         let row = call
             .state
@@ -2145,6 +2345,7 @@ mod tests {
                 "tab-groups",
                 "session-naming",
                 "page-ownership-notice",
+                "captcha-status",
                 "scope-notice",
                 "helper-discovery",
             ]
@@ -2155,7 +2356,7 @@ mod tests {
         // cannot be reintroduced without someone deleting this line on purpose.
         assert_eq!(
             GUARDS.len(),
-            2,
+            3,
             "a guard was added. Ownership must not be one of them: it informs, it never blocks"
         );
         assert_eq!(
@@ -2163,19 +2364,54 @@ mod tests {
                 .iter()
                 .map(|observer| observer.name)
                 .collect::<Vec<_>>(),
-            ["audit", "run_failure"]
+            ["journal", "audit", "run_failure"]
         );
     }
 
+    #[tokio::test]
+    async fn saved_outputs_are_readable_on_the_mcp_wire_without_a_browser() -> anyhow::Result<()> {
+        let mut call = crate::api::mcp::test_support::tool_call("read_output", json!({})).await?;
+        let directory = tempfile::tempdir()?;
+        call.output_files = browseros_mcp::output_store::OutputStore::new(
+            directory.path().to_path_buf(),
+            call.session_id.as_str(),
+        );
+        call.output_files
+            .write_part("document", "txt", b"complete saved output")
+            .await?;
+        let output = call
+            .output_files
+            .finish(&json!({"ok":true}))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("missing output"))?;
+        call.raw_args = json!({"outputId": output.id, "part":"document.txt"});
+        let result = dispatch_tool_call(call).await?;
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|data| data.get("text")),
+            Some(&json!("complete saved output"))
+        );
+        Ok(())
+    }
+
     #[test]
-    fn wire_result_strips_structured_content_unless_the_tool_has_an_output_schema() {
-        // No output_schema: content-only envelope, structured content dropped.
+    fn wire_result_preserves_public_structured_content_without_requiring_an_output_schema() {
+        // An output schema is optional; public metadata must survive either way.
         let stripped = wire_result(
-            ToolResult::text("ok", Some(json!({ "page": 7, "secret": true }))),
-            false,
+            ToolResult::text(
+                "ok",
+                Some(json!({ "page": 7, "output": { "id": "saved-output" } })),
+            ),
+            true,
         );
         assert_eq!(stripped.is_error, Some(false));
-        assert_eq!(stripped.structured_content, None);
+        assert_eq!(
+            stripped.structured_content,
+            Some(json!({ "page": 7, "output": { "id": "saved-output" } }))
+        );
         assert_eq!(stripped.meta, None);
 
         // With output_schema (e.g. `run`): the promised structured content is delivered

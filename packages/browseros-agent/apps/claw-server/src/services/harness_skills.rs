@@ -1,8 +1,7 @@
-
 use harness_integrations::SkillSpec;
 use serde::Deserialize;
 
-use crate::config::PursueOffering;
+use crate::config::TabGrouping;
 use crate::error::{AppError, AppResult};
 
 // The one and only copy of the product skill. Embedding it removes the
@@ -17,6 +16,21 @@ const SKILL_FRONTMATTER_NAME: &str = crate::identity::SLUG;
 /// On-disk directory name for the managed skill; matches the SKILL.md frontmatter
 /// `name` so agents that require `name == parent directory` accept it.
 pub(crate) const MANAGED_SKILL_DIRECTORY: &str = crate::identity::SLUG;
+/// The pre-rename directory name earlier builds installed the skill under. Existing
+/// installs at this name are migrated to `MANAGED_SKILL_DIRECTORY` on reconcile.
+pub(crate) const LEGACY_SKILL_DIRECTORY_NAME: &str = "browserclaw";
+
+/// The guide's promises of server-made tab groups, and what explicit grouping says instead.
+///
+/// The MCP text has its own rewrites in `api::mcp::tab_grouping`; these stay here because a
+/// service must not reach up into the API layer, and the guide words them its own way.
+const SKILL_GROUP_PROMISES: [(&str, &str); 2] = [
+    ("; tabs group as `<client>/<name>` in the cockpit.", "."),
+    (
+        ", unless a tool reply asks you to close your task's tab group.",
+        ".",
+    ),
+];
 
 /// The tool-choice paragraph of the skill, which ranks `run` first.
 ///
@@ -24,7 +38,7 @@ pub(crate) const MANAGED_SKILL_DIRECTORY: &str = crate::identity::SLUG;
 /// fifty line operating guide drifts from the first within a release, and the
 /// one property worth keeping is that an install without the decision loop
 /// reads the same guide it has always read.
-const SKILL_RUN_FIRST: &str = "Reach for `run` first; the granular tools are the fallback. One `run` script composes the whole snapshot -> act -> verify loop, bulk extraction, and helper reuse in a single call, and it is the only place saved helpers work. Compose anything multi-step inside one `run` script rather than chaining granular calls. Use a single granular tool (`act`, `snapshot`, `navigate`, `evaluate`, `read`) directly only for a one-off step, step-by-step debugging, or something a `run` script cannot express.";
+const SKILL_RUN_FIRST: &str = "Reach for `run` first; the granular tools are the fallback. One `run` script composes the whole snapshot -> act -> verify loop, bulk extraction, and helper reuse in a single call, and it is the only place saved helpers work. Compose anything multi-step inside one `run` script rather than chaining granular calls. Use a single granular tool (`act`, `snapshot`, `navigate`, `read`) directly only for a one-off step, step-by-step debugging, or something a `run` script cannot express.";
 
 /// What it becomes while the decision loop is offered.
 const SKILL_PURSUE_FIRST: &str = r#"Reach for `pursue` first. `run` is the fallback, and the granular tools are the fallback to that.
@@ -35,7 +49,7 @@ Read the reply in this order. `status` is the verdict: `satisfied`, or one of se
 
 Fall back to `run` once two `pursue` calls have come back with a status other than `satisfied`. The first one usually means the goal needs a word changed and `tryNext` names that word, so try once more with it; write the work as a `run` script only if that second try also comes back unsatisfied.
 
-Go straight to `run` for work that is a script rather than an outcome: pagination over many pages, bulk extraction, repeated loops over a list you already hold, or anything needing a saved helper. One `run` script composes the whole snapshot -> act -> verify loop in a single call, and it is the only place saved helpers work. Use a single granular tool (`act`, `snapshot`, `navigate`, `evaluate`, `read`) directly only for a one-off step or step-by-step debugging."#;
+Go straight to `run` for work that is a script rather than an outcome: pagination over many pages, bulk extraction, repeated loops over a list you already hold, or anything needing a saved helper. One `run` script composes the whole snapshot -> act -> verify loop in a single call, and it is the only place saved helpers work. Use a single granular tool (`act`, `snapshot`, `navigate`, `read`) directly only for a one-off step or step-by-step debugging."#;
 
 #[derive(Deserialize)]
 struct SkillFrontmatter {
@@ -48,12 +62,16 @@ struct SkillFrontmatter {
 /// There is no runtime override: the binary that exposes the tools is the binary that
 /// carries their guide. `pursue` chooses which tool the guide tells the agent
 /// to reach for; it is read once at launch, so a server that gains or loses the credential
-/// needs a restart before installed skills follow.
-pub fn load_browserclaw_skill(pursue: PursueOffering) -> AppResult<SkillSpec> {
-    let spec = parse_browserclaw_skill(with_tool_choice(EMBEDDED_SKILL.to_string(), pursue))
-        .map_err(|error| {
-            AppError::Internal(format!("embedded {DISPLAY} skill failed validation: {error}", DISPLAY = crate::identity::DISPLAY_NAME))
-        })?;
+/// needs a restart before installed skills follow. `tab_grouping` decides whether the guide
+/// may promise the server's own tab groups.
+pub fn load_browserclaw_skill(tab_grouping: TabGrouping) -> AppResult<SkillSpec> {
+    let content = with_tab_grouping(EMBEDDED_SKILL.to_string(), tab_grouping);
+    let spec = parse_browserclaw_skill(content).map_err(|error| {
+        AppError::Internal(format!(
+            "embedded {DISPLAY} skill failed validation: {error}",
+            DISPLAY = crate::identity::DISPLAY_NAME
+        ))
+    })?;
     tracing::info!(
         skill = crate::identity::SLUG,
         source = "embedded",
@@ -77,16 +95,43 @@ fn short_hash(content: &str) -> String {
         .collect()
 }
 
-/// Swaps the tool-choice paragraph when the decision loop is offered.
+/// Swaps the tool-choice paragraph for the decision loop.
 ///
 /// A guide whose text does not match the catalogue it describes is worse than
 /// no guide: the agent reads both and believes the one that travels with the
-/// tool. Without the loop this substitutes nothing at all.
-fn with_tool_choice(content: String, pursue: PursueOffering) -> String {
-    match pursue {
-        PursueOffering::Absent => content,
-        PursueOffering::Offered => content.replace(SKILL_RUN_FIRST, SKILL_PURSUE_FIRST),
+/// tool. The catalogue decides whether `pursue` is listed, so the installed
+/// guide ranks it first.
+fn with_tool_choice(content: String) -> String {
+    content.replace(SKILL_RUN_FIRST, SKILL_PURSUE_FIRST)
+}
+
+/// Removes the guide's group promises when the server does not group tabs itself. Automatic
+/// grouping installs the guide unchanged.
+fn with_tab_grouping(content: String, tab_grouping: TabGrouping) -> String {
+    if tab_grouping.is_automatic() {
+        return content;
     }
+    SKILL_GROUP_PROMISES
+        .iter()
+        .fold(content, |content, (promise, explicit)| {
+            content.replace(promise, explicit)
+        })
+}
+
+/// The guide installed while ultrafast is on.
+///
+/// NeoB ships one hand-written guide in which the ultrafast path is already a section of its
+/// own, so the upstream wrapper has nothing left to insert. What it still does is rank
+/// `pursue` first in the tool-choice paragraph: the catalogue lists the tool whenever the
+/// decisions worker is reachable, and a guide that told the agent to reach for `run` would
+/// contradict it.
+pub fn with_ultrafast(spec: &SkillSpec) -> AppResult<SkillSpec> {
+    parse_browserclaw_skill(with_tool_choice(spec.content().to_string())).map_err(|error| {
+        AppError::Internal(format!(
+            "ultrafast {DISPLAY} skill failed validation: {error}",
+            DISPLAY = crate::identity::DISPLAY_NAME
+        ))
+    })
 }
 
 fn parse_browserclaw_skill(content: String) -> Result<SkillSpec, String> {
@@ -131,8 +176,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        PursueOffering, SKILL_PURSUE_FIRST, SKILL_RUN_FIRST, embedded_browserclaw_skill,
-        load_browserclaw_skill, with_tool_choice,
+        SKILL_GROUP_PROMISES, SKILL_PURSUE_FIRST, SKILL_RUN_FIRST, TabGrouping,
+        embedded_browserclaw_skill, load_browserclaw_skill, with_ultrafast,
     };
 
     /// The swap is a string replace against the shipped guide. A reword of that
@@ -144,30 +189,20 @@ mod tests {
         assert_eq!(content.matches(SKILL_RUN_FIRST).count(), 1);
     }
 
+    /// Each promise is removed by an exact string replace, so a reword of the shipped guide
+    /// would silently keep it in the explicit-grouping install.
     #[test]
-    fn the_guide_defers_to_the_server_cleanup_preference() {
-        let guide = embedded_browserclaw_skill();
-        let line = guide
-            .lines()
-            .find(|line| line.contains("server's tab-group cleanup preference"))
-            .expect("guide must defer to the server cleanup preference");
-        for needle in [
-            "latest",
-            "when enabled",
-            "after finishing",
-            "`tab_groups` action=\"close\" groupId=\"<your task group id>\"",
-            "Preserve useful pages otherwise",
-            "explicit user requests to keep results open",
-            "user's and other agents' groups",
-        ] {
-            assert!(line.contains(needle), "cleanup line lost `{needle}`");
+    fn the_guide_still_contains_each_group_promise_that_gets_removed() {
+        let content = embedded_browserclaw_skill();
+        for (promise, _) in SKILL_GROUP_PROMISES {
+            assert_eq!(content.matches(promise).count(), 1, "{promise}");
         }
     }
 
     #[test]
     fn a_server_with_the_loop_installs_a_guide_that_prefers_it()
     -> Result<(), Box<dyn std::error::Error>> {
-        let offered = load_browserclaw_skill(PursueOffering::Offered)?;
+        let offered = with_ultrafast(&load_browserclaw_skill(TabGrouping::Automatic)?)?;
         let content = offered.content();
         assert_eq!(offered.name(), crate::identity::SLUG);
         assert!(content.contains(SKILL_PURSUE_FIRST));
@@ -181,15 +216,46 @@ mod tests {
         Ok(())
     }
 
-    /// Nothing is substituted without a credential, which is the whole promise made to
-    /// a production install.
+    /// Without ultrafast the installed guide is the source file, byte for byte.
     #[test]
-    fn a_server_without_the_loop_installs_the_guide_unchanged() {
-        let content = embedded_browserclaw_skill().to_string();
+    fn a_server_without_the_loop_installs_the_guide_unchanged()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = embedded_browserclaw_skill();
         assert_eq!(
-            with_tool_choice(content.clone(), PursueOffering::Absent),
+            load_browserclaw_skill(TabGrouping::Automatic)?.content(),
             content
         );
+        Ok(())
+    }
+
+    /// A guide that promises groups the server will not make is worse than none, since the
+    /// agent reads both. Explicit grouping installs it without them; automatic, unchanged.
+    #[test]
+    fn an_explicit_grouping_server_installs_a_guide_without_group_promises()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let explicit = load_browserclaw_skill(TabGrouping::Explicit)?;
+        let content = explicit.content();
+        assert!(!content.contains("tab group"), "{content}");
+        assert!(!content.contains("tabs group as"), "{content}");
+        assert!(content.contains("Call `name_session` early"));
+        assert!(content.contains("Preserve useful pages when the task ends."));
+        let automatic = load_browserclaw_skill(TabGrouping::Automatic)?;
+        assert_eq!(automatic.content(), embedded_browserclaw_skill());
+        Ok(())
+    }
+
+    /// The single-source guide already documents the ultrafast path, so the wrapper only
+    /// re-ranks the tool-choice paragraph instead of inserting the section a second time.
+    #[test]
+    fn ultrafast_swaps_the_tool_choice_and_keeps_one_guide()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let skill = load_browserclaw_skill(TabGrouping::Automatic)?;
+        let ultrafast = with_ultrafast(&skill)?;
+        assert_ne!(ultrafast, skill);
+        assert_eq!(ultrafast.content().matches("## With ultrafast").count(), 1);
+        assert!(ultrafast.content().contains(SKILL_PURSUE_FIRST));
+        assert!(!ultrafast.content().contains(SKILL_RUN_FIRST));
+        Ok(())
     }
 
     #[test]

@@ -149,9 +149,7 @@ describe('release-claw-server workflow', () => {
 
   it('packages the canonical BrowserOS skill', () => {
     const build = section('  build:', '  publish-versioned:')
-    expect(build).toContain(
-      'source_skill = agent / "resources/skills/browserclaw/SKILL.md"',
-    )
+    expect(build).toContain('source_skill = repo / "skills/neob/SKILL.md"')
     expect(build).toContain('shutil.copy2(source_skill, staged_skill)')
     expect(build).toContain('"resources/skills/browserclaw/SKILL.md"')
   })

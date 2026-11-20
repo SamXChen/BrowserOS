@@ -23,7 +23,6 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -31,10 +30,17 @@ import {
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { parse } from 'yaml'
+import {
+  assertTreeMatches,
+  dockerUserMount,
+  listFiles,
+  OPENAPI_GENERATOR_IMAGE,
+  runDocker,
+  rustfmtFiles,
+} from './openapi-generator'
 
 const root = join(import.meta.dir, '../..')
 const generatorVersion = '7.22.0'
-const image = `openapitools/openapi-generator-cli:v${generatorVersion}`
 // Local runs without Docker point this at the same-version jar from Maven Central.
 const generatorJar = process.env.OPENAPI_GENERATOR_JAR
 const check = process.argv.includes('--check')
@@ -429,7 +435,7 @@ function runOpenApiGenerator(outputRoot: string, args: string[]): void {
   }
   // Run the container as the invoking user so the generated files on
   // the bind mount aren't root-owned on Linux hosts.
-  const mount = `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`
+  const mount = dockerUserMount()
   runDocker([
     'run',
     '--rm',
@@ -439,7 +445,7 @@ function runOpenApiGenerator(outputRoot: string, args: string[]): void {
     `${root}:/local:ro`,
     '-v',
     `${outputRoot}:/out`,
-    image,
+    OPENAPI_GENERATOR_IMAGE,
     'generate',
     ...args,
   ])
@@ -521,19 +527,7 @@ function runGenerator(outputRoot: string): GeneratedTrees {
     clientOutput,
     join(root, 'packages/claw-api-client/src/generated/openapi.ts'),
   )
-  for (const file of listFiles(rust).filter((path) => path.endsWith('.rs'))) {
-    const result = spawnSync(
-      'rustfmt',
-      ['--edition', '2024', join(rust, file)],
-      {
-        stdio: 'inherit',
-      },
-    )
-    if (result.error) throw result.error
-    if (result.status !== 0) {
-      throw new Error(`rustfmt exited with status ${result.status}`)
-    }
-  }
+  rustfmtFiles(rust)
 
   return {
     typescript,
@@ -667,14 +661,6 @@ function rustModelFilesByModel(indexSource: string): Record<string, string> {
   )
 }
 
-function runDocker(args: string[]): void {
-  const result = spawnSync('docker', args, { stdio: 'inherit' })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    throw new Error(`OpenAPI Generator exited with status ${result.status}`)
-  }
-}
-
 function installGenerated(trees: GeneratedTrees): void {
   const typescriptTarget = join(root, 'packages/claw-api/src/generated')
   const rustTarget = join(root, 'crates/claw-api/src/generated')
@@ -697,58 +683,26 @@ function installGenerated(trees: GeneratedTrees): void {
   cpSync(trees.client, clientTarget, { recursive: true })
 }
 
-function listFiles(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true })
-    .flatMap((entry) => {
-      const path = join(directory, entry.name)
-      return entry.isDirectory()
-        ? listFiles(path).map((child) => join(entry.name, child))
-        : [entry.name]
-    })
-    .toSorted()
-}
-
-function assertTreeMatches(expected: string, actual: string): void {
-  const expectedFiles = listFiles(expected)
-  const actualFiles = listFiles(actual)
-  const differences = new Set<string>()
-
-  for (const file of expectedFiles) {
-    if (!actualFiles.includes(file)) {
-      differences.add(`missing ${file}`)
-      continue
-    }
-    if (
-      !readFileSync(join(expected, file)).equals(
-        readFileSync(join(actual, file)),
-      )
-    ) {
-      differences.add(`changed ${file}`)
-    }
-  }
-  for (const file of actualFiles) {
-    if (!expectedFiles.includes(file)) differences.add(`unexpected ${file}`)
-  }
-  if (differences.size > 0) {
-    throw new Error(
-      `Generated BrowserClaw API is stale:\n${[...differences].map((line) => `  ${line}`).join('\n')}`,
-    )
-  }
-}
-
 if (import.meta.main) {
   const temporaryRoot = mkdtempSync(join(tmpdir(), 'claw-api-codegen-'))
   try {
     const trees = runGenerator(temporaryRoot)
     if (check) {
+      const label = 'BrowserClaw API'
       assertTreeMatches(
         trees.typescript,
         join(root, 'packages/claw-api/src/generated'),
+        label,
       )
-      assertTreeMatches(trees.rust, join(root, 'crates/claw-api/src/generated'))
+      assertTreeMatches(
+        trees.rust,
+        join(root, 'crates/claw-api/src/generated'),
+        label,
+      )
       assertTreeMatches(
         trees.client,
         join(root, 'packages/claw-api-client/src/generated'),
+        label,
       )
       console.log('BrowserClaw API generated output is current.')
     } else {
